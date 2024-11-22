@@ -4,6 +4,7 @@ import { open } from 'sqlite';
 import bcrypt from 'bcryptjs';
 import fs from 'fs/promises';
 import path from 'path';
+import crypto from 'crypto';
 
 const isProd = process.env.NODE_ENV === 'production';
 
@@ -53,51 +54,7 @@ export async function getSqliteDb() {
     filename: dbPath,
     driver: sqlite3.Database
   });
-
-  // Initialize tables if they don't exist
-  await sqliteDb.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      name TEXT,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      role TEXT DEFAULT 'USER',
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS prompts (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      prompt_text TEXT NOT NULL,
-      specialty TEXT NOT NULL,
-      is_default INTEGER DEFAULT 0,
-      is_system INTEGER DEFAULT 0,
-      user_id TEXT REFERENCES users(id),
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS reports (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      findings TEXT NOT NULL,
-      report TEXT NOT NULL,
-      specialty TEXT NOT NULL,
-      prompt_id TEXT REFERENCES prompts(id),
-      user_id TEXT REFERENCES users(id) NOT NULL,
-      is_archived INTEGER DEFAULT 0,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
-    CREATE INDEX IF NOT EXISTS idx_reports_specialty ON reports(specialty);
-    CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);
-    CREATE INDEX IF NOT EXISTS idx_prompts_specialty ON prompts(specialty);
-    CREATE INDEX IF NOT EXISTS idx_prompts_user_id ON prompts(user_id);
-  `);
-
+  
   return sqliteDb;
 }
 
@@ -111,6 +68,7 @@ export async function getDb() {
 // User operations
 export async function getUserByEmail(email) {
   const db = await getDb();
+  
   if (isProd) {
     const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
     return result.rows[0];
@@ -121,6 +79,7 @@ export async function getUserByEmail(email) {
 
 export async function getUserById(id) {
   const db = await getDb();
+  
   if (isProd) {
     const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
     return result.rows[0];
@@ -131,83 +90,130 @@ export async function getUserById(id) {
 
 export async function createUser({ name, email, password, role = 'USER' }) {
   const db = await getDb();
+  const hashedPassword = await bcrypt.hash(password, 10);
+  const id = crypto.randomUUID();
+
   if (isProd) {
-    const result = await db.query(
-      'INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING *',
-      [name, email, password, role]
+    await db.query(
+      'INSERT INTO users (id, name, email, password, role) VALUES ($1, $2, $3, $4, $5)',
+      [id, name, email, hashedPassword, role]
     );
-    return result.rows[0];
   } else {
-    const result = await db.run(
-      'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
-      [name, email, password, role]
+    await db.run(
+      'INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)',
+      [id, name, email, hashedPassword, role]
     );
-    return { id: result.lastID, name, email, role };
   }
+  return { id, name, email, role };
 }
 
 // Initialize database
 export async function initDb() {
   const db = await getDb();
+  
   if (isProd) {
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        name TEXT,
-        email TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        role TEXT DEFAULT 'USER',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
+    try {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          email TEXT UNIQUE NOT NULL,
+          password TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'USER',
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
 
-      CREATE TABLE IF NOT EXISTS prompts (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        name TEXT NOT NULL,
-        prompt_text TEXT NOT NULL,
-        specialty TEXT NOT NULL,
-        is_default BOOLEAN DEFAULT false,
-        is_system BOOLEAN DEFAULT false,
-        user_id UUID REFERENCES users(id),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS prompts (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          specialty TEXT,
+          is_default BOOLEAN DEFAULT false,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
 
-      CREATE TABLE IF NOT EXISTS reports (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        title TEXT NOT NULL,
-        findings TEXT NOT NULL,
-        report TEXT NOT NULL,
-        specialty TEXT NOT NULL,
-        prompt_id UUID REFERENCES prompts(id),
-        user_id UUID REFERENCES users(id) NOT NULL,
-        is_archived BOOLEAN DEFAULT false,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS reports (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          findings TEXT NOT NULL,
+          report TEXT NOT NULL,
+          specialty TEXT,
+          prompt_id TEXT,
+          user_id TEXT NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id),
+          FOREIGN KEY (prompt_id) REFERENCES prompts(id)
+        )
+      `);
 
-      CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
-      CREATE INDEX IF NOT EXISTS idx_reports_specialty ON reports(specialty);
-      CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);
-      CREATE INDEX IF NOT EXISTS idx_prompts_specialty ON prompts(specialty);
-      CREATE INDEX IF NOT EXISTS idx_prompts_user_id ON prompts(user_id);
-    `);
+      // Create indexes for better performance
+      await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
+        CREATE INDEX IF NOT EXISTS idx_reports_specialty ON reports(specialty);
+        CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);
+      `);
+    } catch (error) {
+      console.error('Error initializing PostgreSQL database:', error);
+      throw error;
+    }
   } else {
-    // SQLite tables are initialized in getSqliteDb
-  }
+    try {
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          email TEXT UNIQUE NOT NULL,
+          password TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'USER',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
 
-  // Create default admin user if it doesn't exist
-  const adminEmail = 'admin@example.com';
-  const existingAdmin = await getUserByEmail(adminEmail);
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS prompts (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          specialty TEXT,
+          is_default BOOLEAN DEFAULT false,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
 
-  if (!existingAdmin) {
-    const hashedPassword = await bcrypt.hash('admin123', 10);
-    await createUser({
-      name: 'Admin User',
-      email: adminEmail,
-      password: hashedPassword,
-      role: 'ADMIN'
-    });
-    console.log('Default admin user created');
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS reports (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          findings TEXT NOT NULL,
+          report TEXT NOT NULL,
+          specialty TEXT,
+          prompt_id TEXT,
+          user_id TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id),
+          FOREIGN KEY (prompt_id) REFERENCES prompts(id)
+        )
+      `);
+
+      // Create indexes for better performance
+      await db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
+        CREATE INDEX IF NOT EXISTS idx_reports_specialty ON reports(specialty);
+        CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);
+      `);
+    } catch (error) {
+      console.error('Error initializing SQLite database:', error);
+      throw error;
+    }
   }
 }
