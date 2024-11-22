@@ -55,11 +55,14 @@ export default function MedicalReportGenerator() {
       }
       
       console.log('Fetched prompts:', data.prompts);
-      // Map the content field to promptText if needed
+      // Map the fields to ensure consistent casing
       const mappedPrompts = data.prompts.map(prompt => ({
         ...prompt,
-        promptText: prompt.content || prompt.promptText
+        promptText: prompt.prompttext || prompt.promptText, // handle both cases
+        isDefault: prompt.isdefault || prompt.isDefault,
+        createdAt: prompt.createdat || prompt.createdAt
       }));
+      console.log('Mapped prompts:', mappedPrompts);
       setPrompts(mappedPrompts);
     } catch (error) {
       console.error('Error fetching prompts:', error);

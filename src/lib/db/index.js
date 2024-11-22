@@ -57,38 +57,43 @@ async function ensureDataDir() {
   return dataDir;
 }
 
-export async function query(text, params) {
-  const db = await getDb();
-  if (isProd) {
-    return db.query(text, params);
-  } else {
-    // Convert PostgreSQL query to SQLite syntax
-    const sqliteQuery = text
-      .replace(/\$\d+/g, '?')
-      .replace(/NOW\(\)/g, "datetime('now')")
-      .replace(/RETURNING \*/g, '');
-    
-    return db.all(sqliteQuery, params);
+export const db = {
+  query: async (text, params) => {
+    const db = await getDb();
+    if (isProd) {
+      return db.query(text, params);
+    } else {
+      // Convert PostgreSQL query to SQLite syntax
+      const sqliteQuery = text
+        .replace(/\$\d+/g, '?')
+        .replace(/NOW\(\)/g, "datetime('now')")
+        .replace(/RETURNING \*/g, '');
+      
+      return db.all(sqliteQuery, params);
+    }
+  },
+  close: async () => {
+    if (pool) {
+      await pool.end();
+      pool = null;
+    }
+    if (sqliteDb) {
+      await sqliteDb.close();
+      sqliteDb = null;
+    }
   }
-}
+};
 
-export async function close() {
-  if (pool) {
-    await pool.end();
-  }
-  if (sqliteDb) {
-    await sqliteDb.close();
-  }
-}
+export { getDb };
 
 // User operations
 export async function getUserByEmail(email) {
-  const result = await query('SELECT * FROM users WHERE email = $1', [email]);
+  const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
   return result.rows[0];
 }
 
 export async function getUserById(id) {
-  const result = await query('SELECT * FROM users WHERE id = $1', [id]);
+  const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
   return result.rows[0];
 }
 
@@ -96,7 +101,7 @@ export async function createUser({ name, email, password, role = 'USER' }) {
   const hashedPassword = await bcrypt.hash(password, 10);
   const id = crypto.randomUUID();
 
-  await query(
+  await db.query(
     'INSERT INTO users (id, name, email, password, role) VALUES ($1, $2, $3, $4, $5)',
     [id, name, email, hashedPassword, role]
   );
@@ -105,7 +110,7 @@ export async function createUser({ name, email, password, role = 'USER' }) {
 
 // Initialize database
 export async function initDb() {
-  await query(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -117,7 +122,7 @@ export async function initDb() {
     )
   `);
 
-  await query(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS prompts (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -129,7 +134,7 @@ export async function initDb() {
     )
   `);
 
-  await query(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS reports (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -146,7 +151,7 @@ export async function initDb() {
   `);
 
   // Create indexes for better performance
-  await query(`
+  await db.query(`
     CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
     CREATE INDEX IF NOT EXISTS idx_reports_specialty ON reports(specialty);
     CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);

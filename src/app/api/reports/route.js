@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { query } from '@/lib/db';
+import { db } from '@/lib/db';
 import crypto from 'crypto';
 
 const isProd = process.env.NODE_ENV === 'production';
@@ -51,22 +51,23 @@ export async function GET(request) {
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
       // Get total count
-      const countResult = await query(
-        `SELECT COUNT(*) FROM reports ${whereClause}`,
+      const countResult = await db.query(
+        `SELECT COUNT(*) as total FROM reports ${whereClause}`,
         params.slice(2)
       );
-      const total = parseInt(countResult.rows[0].count);
+      const total = parseInt(countResult.rows[0].total);
 
-      // Get paginated reports
-      const reports = await query(
-        `SELECT * FROM reports ${whereClause} 
-         ORDER BY ${sortBy} ${sortOrder} 
-         LIMIT $1 OFFSET $2`,
+      // Get paginated results
+      const result = await db.query(
+        `SELECT * FROM reports 
+        ${whereClause} 
+        ORDER BY ${sortBy} ${sortOrder}
+        LIMIT $1 OFFSET $2`,
         params
       );
 
       return NextResponse.json({
-        reports: reports.rows,
+        reports: result.rows,
         pagination: {
           total,
           page,
@@ -76,25 +77,13 @@ export async function GET(request) {
       });
     } else {
       // Development: Return mock data
-      const mockReports = [
-        {
-          id: '1',
-          title: 'Sample Report 1',
-          content: 'This is a sample report content.',
-          specialty: 'General',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          user_id: session.user.id
-        }
-      ];
-
       return NextResponse.json({
-        reports: mockReports,
+        reports: [],
         pagination: {
-          total: 1,
-          page: 1,
-          limit: 10,
-          totalPages: 1
+          total: 0,
+          page,
+          limit,
+          totalPages: 0
         }
       });
     }
@@ -116,11 +105,11 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { title, content, specialty, patientInfo, systemPrompt } = await request.json();
+    const { title, content, specialty, patientInfo, systemPrompt, generatedReport } = await request.json();
 
     if (!title || !content) {
       return NextResponse.json(
-        { error: 'Title and content are required' },
+        { error: 'Title and findings content are required' },
         { status: 400 }
       );
     }
@@ -130,17 +119,18 @@ export async function POST(request) {
 
     if (isProd) {
       // Insert the report
-      await query(
+      await db.query(
         `INSERT INTO reports (
-          id, title, content, specialty, patient_info, system_prompt,
+          id, title, findings, report, specialty, patient_info, system_prompt,
           user_id, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           id,
           title,
-          content,
+          content, // User's input findings
+          generatedReport || null, // OpenAI generated report
           specialty || null,
-          patientInfo || null,
+          patientInfo ? JSON.stringify(patientInfo) : null,
           systemPrompt || null,
           session.user.id,
           now,
@@ -149,13 +139,22 @@ export async function POST(request) {
       );
 
       // Get the created report
-      const result = await query(
+      const result = await db.query(
         'SELECT * FROM reports WHERE id = $1',
         [id]
       );
 
+      // Map the response to match the frontend expectations
+      const report = result.rows[0];
       return NextResponse.json(
-        { message: 'Report created successfully', report: result.rows[0] },
+        { 
+          message: 'Report created successfully', 
+          report: {
+            ...report,
+            content: report.findings, // Map findings to content for frontend compatibility
+            generatedReport: report.report // Include the OpenAI generated report
+          }
+        },
         { status: 201 }
       );
     } else {
@@ -163,7 +162,8 @@ export async function POST(request) {
       const report = {
         id,
         title,
-        content,
+        content, // Original user input (findings)
+        generatedReport: generatedReport || null, // OpenAI generated report
         specialty,
         patient_info: patientInfo,
         system_prompt: systemPrompt,
@@ -180,7 +180,7 @@ export async function POST(request) {
   } catch (error) {
     console.error('Error creating report:', error);
     return NextResponse.json(
-      { error: 'Error creating report' },
+      { error: 'Failed to generate report: ' + error.message },
       { status: 500 }
     );
   }
