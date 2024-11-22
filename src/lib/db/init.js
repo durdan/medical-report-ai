@@ -1,4 +1,4 @@
-import { initializeDatabase } from './index';
+import db_operations from './index';
 
 // Initialize the database when the application starts
-initializeDatabase().catch(console.error);
+db_operations.initializeDatabase().catch(console.error);

@@ -1,4 +1,7 @@
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { NextResponse } from 'next/server';
+import db_operations from '@/lib/db';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
@@ -60,29 +63,51 @@ async function initializeDefaultPrompts() {
   }
 }
 
-export async function GET() {
+export async function GET(request) {
   try {
-    await initializeDefaultPrompts();
-    
-    const files = await fs.readdir(PROMPTS_DIR);
-    const prompts = await Promise.all(
-      files.map(async (file) => {
-        const content = await fs.readFile(path.join(PROMPTS_DIR, file), 'utf-8');
-        return JSON.parse(content);
-      })
-    );
-    
-    // Sort prompts by creation date, with default prompts first
-    prompts.sort((a, b) => {
-      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
-      return new Date(b.createdAt) - new Date(a.createdAt);
-    });
-    
-    return NextResponse.json({ prompts });
+    // Check authentication
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    console.log('Fetching prompts for user:', session.user);
+
+    let prompts;
+    if (session.user.role === 'ADMIN') {
+      // Admin sees all prompts
+      prompts = await db_operations.all(`
+        SELECT * FROM prompts 
+        ORDER BY is_default DESC, created_at DESC
+      `);
+    } else {
+      // Regular users see their prompts and default prompts
+      prompts = await db_operations.all(`
+        SELECT * FROM prompts 
+        WHERE user_id = ? OR is_default = 1
+        ORDER BY is_default DESC, created_at DESC
+      `, [session.user.id]);
+    }
+
+    console.log('Found prompts:', prompts);
+
+    // Format the response
+    const formattedPrompts = prompts.map(prompt => ({
+      id: prompt.id,
+      name: prompt.name,
+      promptText: prompt.prompt_text,
+      specialty: prompt.specialty,
+      isDefault: Boolean(prompt.is_default),
+      userId: prompt.user_id,
+      createdAt: prompt.created_at,
+      updatedAt: prompt.updated_at
+    }));
+
+    return NextResponse.json({ prompts: formattedPrompts });
   } catch (error) {
     console.error('Error fetching prompts:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch prompts' },
+      { error: 'Failed to fetch prompts: ' + error.message },
       { status: 500 }
     );
   }
@@ -90,37 +115,44 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    await ensurePromptsDir();
-    
-    const data = await request.json();
-    
-    if (!data.promptText || !data.name) {
+    // Check authentication
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { name, promptText, specialty } = await request.json();
+
+    // Validate required fields
+    if (!name || !promptText || !specialty) {
       return NextResponse.json(
-        { error: 'Name and prompt text are required' },
+        { error: 'Name, prompt text, and specialty are required' },
         { status: 400 }
       );
     }
 
-    const newPrompt = {
-      id: generateId(),
-      name: data.name,
-      specialty: data.specialty || 'General',
-      promptText: data.promptText,
-      isDefault: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const promptId = `prompt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    await db_operations.run(`
+      INSERT INTO prompts (id, name, prompt_text, specialty, user_id, is_default)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [promptId, name, promptText, specialty, session.user.id, 0]);
 
-    await fs.writeFile(
-      path.join(PROMPTS_DIR, `${newPrompt.id}.json`),
-      JSON.stringify(newPrompt, null, 2)
-    );
-
-    return NextResponse.json({ prompt: newPrompt });
+    return NextResponse.json({ 
+      success: true,
+      prompt: {
+        id: promptId,
+        name,
+        promptText,
+        specialty,
+        userId: session.user.id,
+        isDefault: false
+      }
+    });
   } catch (error) {
     console.error('Error creating prompt:', error);
     return NextResponse.json(
-      { error: 'Failed to create prompt' },
+      { error: 'Failed to create prompt: ' + error.message },
       { status: 500 }
     );
   }

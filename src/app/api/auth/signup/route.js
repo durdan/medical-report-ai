@@ -1,8 +1,7 @@
-import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { NextResponse } from 'next/server';
-
-const prisma = new PrismaClient();
+import db_operations from '@/lib/db';
+import crypto from 'crypto';
 
 export async function POST(request) {
   try {
@@ -16,10 +15,14 @@ export async function POST(request) {
       );
     }
 
+    // Initialize database if needed
+    await db_operations.initializeDatabase();
+
     // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
+    const existingUser = await db_operations.get(
+      'SELECT * FROM users WHERE email = ?',
+      [email]
+    );
 
     if (existingUser) {
       return NextResponse.json(
@@ -31,21 +34,23 @@ export async function POST(request) {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        role: 'USER', // Default role
-      },
-    });
+    // Generate a unique ID
+    const id = crypto.randomUUID();
 
-    // Remove password from response
-    const { password: _, ...userWithoutPassword } = user;
+    // Create user
+    await db_operations.run(
+      'INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)',
+      [id, name, email, hashedPassword, 'USER']
+    );
+
+    // Get the created user
+    const user = await db_operations.get(
+      'SELECT id, name, email, role FROM users WHERE id = ?',
+      [id]
+    );
 
     return NextResponse.json(
-      { message: 'User created successfully', user: userWithoutPassword },
+      { message: 'User created successfully', user },
       { status: 201 }
     );
   } catch (error) {

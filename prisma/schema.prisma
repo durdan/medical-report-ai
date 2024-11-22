@@ -45,9 +45,12 @@ model User {
   password      String?
   image         String?
   role          String    @default("USER")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
   accounts      Account[]
   sessions      Session[]
   reports       Report[]
+  prompts       Prompt[]
 }
 
 model VerificationToken {
@@ -59,11 +62,36 @@ model VerificationToken {
 }
 
 model Report {
-  id        String   @id @default(cuid())
-  title     String
-  content   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  id          String   @id @default(cuid())
+  title       String
+  findings    String   @db.Text
+  report      String   @db.Text
+  specialty   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  promptId    String?
+  prompt      Prompt?  @relation(fields: [promptId], references: [id])
+  isArchived  Boolean  @default(false)
+  
+  @@index([userId])
+  @@index([specialty])
+  @@index([createdAt])
+}
+
+model Prompt {
+  id          String   @id @default(cuid())
+  name        String
+  promptText  String   @db.Text
+  specialty   String
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reports     Report[]
+  
+  @@index([userId])
+  @@index([specialty])
 }

@@ -6,7 +6,7 @@ import { MEDICAL_SPECIALTIES } from '@/lib/constants';
 
 export default function MedicalReportGenerator() {
   const [prompts, setPrompts] = useState([]);
-  const [selectedPrompt, setSelectedPrompt] = useState('default');
+  const [selectedPrompt, setSelectedPrompt] = useState({ id: 'default' });
   const [selectedPromptData, setSelectedPromptData] = useState(null);
   const [findings, setFindings] = useState('');
   const [report, setReport] = useState('');
@@ -17,26 +17,44 @@ export default function MedicalReportGenerator() {
   const [isRefining, setIsRefining] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
     fetchPrompts();
   }, []);
 
   useEffect(() => {
-    if (prompts.length > 0 && selectedPrompt) {
-      const promptData = prompts.find(p => p.id === selectedPrompt);
+    if (prompts.length > 0) {
+      // Find a default prompt for the current specialty
+      const defaultPrompt = prompts.find(p => p.isDefault && p.specialty === specialty);
+      if (defaultPrompt) {
+        setSelectedPrompt(defaultPrompt);
+      } else {
+        // If no default prompt for specialty, use the first prompt or create a default state
+        setSelectedPrompt(prompts[0] || { id: 'default', name: 'Default Prompt' });
+      }
+    }
+  }, [specialty, prompts]);
+
+  useEffect(() => {
+    if (prompts.length > 0 && selectedPrompt.id) {
+      const promptData = prompts.find(p => p.id === selectedPrompt.id);
       setSelectedPromptData(promptData);
     }
   }, [selectedPrompt, prompts]);
 
   const fetchPrompts = async () => {
+    setError('');
     try {
       const response = await fetch('/api/prompts');
       const data = await response.json();
-      setPrompts(data.prompts);
-      if (data.prompts.length > 0) {
-        setSelectedPrompt(data.prompts[0].id);
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to fetch prompts');
       }
+      
+      console.log('Fetched prompts:', data.prompts);
+      setPrompts(data.prompts);
     } catch (error) {
       console.error('Error fetching prompts:', error);
       setError('Failed to load prompts');
@@ -67,17 +85,15 @@ export default function MedicalReportGenerator() {
   };
 
   const handleGenerate = async () => {
-    if (!findings.trim()) {
+    if (!findings) {
       setError('Please enter medical findings');
       return;
     }
 
     setLoading(true);
     setError('');
-    setReport('');
-
+    
     try {
-      const selectedPromptData = prompts.find(p => p.id === selectedPrompt);
       const response = await fetch('/api/reports/generate', {
         method: 'POST',
         headers: {
@@ -86,22 +102,70 @@ export default function MedicalReportGenerator() {
         body: JSON.stringify({
           findings,
           specialty,
-          promptText: selectedPromptData?.promptText,
+          promptId: selectedPrompt?.id === 'default' ? null : selectedPrompt?.id
         }),
       });
 
       const data = await response.json();
+      
       if (!response.ok) {
         throw new Error(data.error || 'Failed to generate report');
       }
 
-      safeSetReport(data.report);
+      setReport(data.report);
+      // Store the promptId from the response for saving
+      setSelectedPrompt(prev => ({
+        ...prev,
+        id: data.promptId || 'default'
+      }));
       setOriginalFindings(findings);
+      
     } catch (error) {
       console.error('Error:', error);
-      setError(error.message || 'Failed to generate report');
+      setError(error.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!report) {
+      setError('Please generate a report first');
+      return;
+    }
+
+    setIsSaving(true);
+    setError('');
+
+    try {
+      const response = await fetch('/api/reports/save', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          findings,
+          report,
+          specialty,
+          promptId: selectedPrompt?.id === 'default' ? null : selectedPrompt?.id
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to save report');
+      }
+
+      // Show success message
+      setSuccessMessage('Report saved successfully!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+
+    } catch (error) {
+      console.error('Error:', error);
+      setError(error.message);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -110,7 +174,7 @@ export default function MedicalReportGenerator() {
     setError('');
 
     try {
-      const selectedPromptData = prompts.find(p => p.id === selectedPrompt);
+      const selectedPromptData = prompts.find(p => p.id === selectedPrompt.id);
       const response = await fetch('/api/reports/refine', {
         method: 'POST',
         headers: {
@@ -138,39 +202,14 @@ export default function MedicalReportGenerator() {
     }
   };
 
-  const handleSave = async () => {
-    setIsSaving(true);
-    setError('');
-
-    try {
-      const response = await fetch('/api/reports/save', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          findings,
-          report,
-          specialty,
-          promptId: selectedPrompt,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to save report');
-      }
-
-      setSaveSuccess(true);
-      setError('Report saved successfully! Redirecting to dashboard...');
-      setTimeout(() => {
-        window.location.href = '/dashboard';
-      }, 2000);
-    } catch (error) {
-      console.error('Error:', error);
-      setError(error.message || 'Failed to save report');
-    } finally {
-      setIsSaving(false);
+  const handleSpecialtyChange = (e) => {
+    const newSpecialty = e.target.value;
+    setSpecialty(newSpecialty);
+    
+    // Find default prompt for new specialty
+    const defaultPrompt = prompts.find(p => p.isDefault && p.specialty === newSpecialty);
+    if (defaultPrompt) {
+      setSelectedPrompt(defaultPrompt);
     }
   };
 
@@ -229,6 +268,11 @@ export default function MedicalReportGenerator() {
                 {error}
               </div>
             )}
+            {successMessage && (
+              <div className="px-4 py-3 rounded-md bg-green-50 text-green-600 border border-green-200">
+                {successMessage}
+              </div>
+            )}
 
             <div className="grid grid-cols-1 gap-6">
               <div className="bg-white p-6 rounded-lg border border-gray-200 space-y-4">
@@ -238,8 +282,8 @@ export default function MedicalReportGenerator() {
                   </label>
                   <div className="flex items-center space-x-4">
                     <select
-                      value={selectedPrompt}
-                      onChange={(e) => setSelectedPrompt(e.target.value)}
+                      value={selectedPrompt.id}
+                      onChange={(e) => setSelectedPrompt({ id: e.target.value })}
                       className="flex-grow rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     >
                       {prompts.map(prompt => (
@@ -276,7 +320,7 @@ export default function MedicalReportGenerator() {
                     </label>
                     <select
                       value={specialty}
-                      onChange={(e) => setSpecialty(e.target.value)}
+                      onChange={handleSpecialtyChange}
                       className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     >
                       {MEDICAL_SPECIALTIES.map(spec => (

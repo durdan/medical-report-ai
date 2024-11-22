@@ -2,46 +2,56 @@
 
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 export default function Navigation() {
   const { data: session, status } = useSession();
   const isLoading = status === 'loading';
+  const pathname = usePathname();
 
   return (
-    <nav className="bg-white shadow-lg">
+    <nav className="bg-gray-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           <div className="flex">
             <div className="flex-shrink-0 flex items-center">
-              <Link href="/" className="text-xl font-bold text-gray-800">
+              <Link href="/" className="text-white text-xl font-bold">
                 Medical Report AI
               </Link>
             </div>
             <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-              <Link
-                href="/"
-                className="text-gray-900 inline-flex items-center px-1 pt-1 text-sm font-medium"
-              >
-                Home
-              </Link>
-              {session && (
+              {session?.user && (
                 <>
                   <Link
                     href="/report-generator"
-                    className="text-gray-900 inline-flex items-center px-1 pt-1 text-sm font-medium"
+                    className={`text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium ${
+                      pathname === '/report-generator' ? 'bg-gray-900 text-white' : ''
+                    }`}
                   >
-                    Generate Report
+                    Report Generator
+                  </Link>
+                  <Link
+                    href="/prompts"
+                    className={`text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium ${
+                      pathname === '/prompts' ? 'bg-gray-900 text-white' : ''
+                    }`}
+                  >
+                    Manage Prompts
                   </Link>
                   <Link
                     href="/dashboard"
-                    className="text-gray-900 inline-flex items-center px-1 pt-1 text-sm font-medium"
+                    className={`text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium ${
+                      pathname === '/dashboard' ? 'bg-gray-900 text-white' : ''
+                    }`}
                   >
                     Dashboard
                   </Link>
                   {session.user.role === 'ADMIN' && (
                     <Link
                       href="/admin"
-                      className="text-gray-900 inline-flex items-center px-1 pt-1 text-sm font-medium"
+                      className={`text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium ${
+                        pathname === '/admin' ? 'bg-gray-900 text-white' : ''
+                      }`}
                     >
                       Admin
                     </Link>
@@ -50,36 +60,22 @@ export default function Navigation() {
               )}
             </div>
           </div>
-          <div className="flex items-center">
-            {isLoading ? (
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-blue-600" />
-            ) : session ? (
-              <div className="flex items-center space-x-4">
-                <span className="text-sm text-gray-700">
-                  {session.user.name || session.user.email}
-                </span>
-                <button
-                  onClick={() => signOut()}
-                  className="bg-red-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-red-700"
-                >
-                  Sign Out
-                </button>
-              </div>
-            ) : (
-              <div className="space-x-4">
-                <Link
-                  href="/auth/signin"
-                  className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700"
-                >
-                  Sign In
-                </Link>
-                <Link
-                  href="/auth/signup"
-                  className="bg-gray-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-700"
-                >
-                  Sign Up
-                </Link>
-              </div>
+          <div className="hidden sm:ml-6 sm:flex sm:items-center">
+            {!session && !isLoading && (
+              <Link
+                href="/auth/signin"
+                className="text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
+              >
+                Sign in
+              </Link>
+            )}
+            {session && (
+              <button
+                onClick={() => signOut()}
+                className="text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
+              >
+                Sign out
+              </button>
             )}
           </div>
         </div>
