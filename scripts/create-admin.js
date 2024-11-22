@@ -1,6 +1,6 @@
-import { createPool } from '@vercel/postgres';
-import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
+const { createPool } = require('@vercel/postgres');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 async function createAdmin() {
   try {
