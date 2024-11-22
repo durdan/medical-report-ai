@@ -14,31 +14,27 @@ let sqliteDb = null;
 export async function getDb() {
   if (isProd) {
     if (!pool) {
-      // Remove any existing sslmode from the URL
+      // Remove any existing sslmode from the URL and add no-verify
       const baseUrl = process.env.POSTGRES_URL_NON_POOLING.split('?')[0];
-      
       pool = new Pool({
         connectionString: `${baseUrl}?sslmode=no-verify`,
-        max: 1,
+        max: 20,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000
+        connectionTimeoutMillis: 2000,
       });
 
-      // Test the connection
-      try {
-        const client = await pool.connect();
-        await client.query('SELECT NOW()');
-        client.release();
-        console.log('Successfully connected to PostgreSQL');
-      } catch (error) {
-        console.error('Database connection error:', error);
-        pool = null;
-        throw error;
-      }
+      pool.on('error', (err) => {
+        console.error('Unexpected error on idle client', err);
+        process.exit(-1);
+      });
+
+      pool.on('connect', () => {
+        console.log('Connected to the database');
+      });
     }
     return pool;
   }
-  
+
   // SQLite for development
   if (!sqliteDb) {
     const dataDir = await ensureDataDir();
@@ -61,170 +57,98 @@ async function ensureDataDir() {
   return dataDir;
 }
 
+export async function query(text, params) {
+  const db = await getDb();
+  if (isProd) {
+    return db.query(text, params);
+  } else {
+    // Convert PostgreSQL query to SQLite syntax
+    const sqliteQuery = text
+      .replace(/\$\d+/g, '?')
+      .replace(/NOW\(\)/g, "datetime('now')")
+      .replace(/RETURNING \*/g, '');
+    
+    return db.all(sqliteQuery, params);
+  }
+}
+
+export async function close() {
+  if (pool) {
+    await pool.end();
+  }
+  if (sqliteDb) {
+    await sqliteDb.close();
+  }
+}
+
 // User operations
 export async function getUserByEmail(email) {
-  const db = await getDb();
-  
-  if (isProd) {
-    try {
-      const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-      return result.rows[0];
-    } catch (error) {
-      console.error('Error in getUserByEmail:', error);
-      throw error;
-    }
-  } else {
-    return db.get('SELECT * FROM users WHERE email = ?', [email]);
-  }
+  const result = await query('SELECT * FROM users WHERE email = $1', [email]);
+  return result.rows[0];
 }
 
 export async function getUserById(id) {
-  const db = await getDb();
-  
-  if (isProd) {
-    try {
-      const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
-      return result.rows[0];
-    } catch (error) {
-      console.error('Error in getUserById:', error);
-      throw error;
-    }
-  } else {
-    return db.get('SELECT * FROM users WHERE id = ?', [id]);
-  }
+  const result = await query('SELECT * FROM users WHERE id = $1', [id]);
+  return result.rows[0];
 }
 
 export async function createUser({ name, email, password, role = 'USER' }) {
-  const db = await getDb();
   const hashedPassword = await bcrypt.hash(password, 10);
   const id = crypto.randomUUID();
 
-  if (isProd) {
-    try {
-      await db.query(
-        'INSERT INTO users (id, name, email, password, role) VALUES ($1, $2, $3, $4, $5)',
-        [id, name, email, hashedPassword, role]
-      );
-    } catch (error) {
-      console.error('Error in createUser:', error);
-      throw error;
-    }
-  } else {
-    await db.run(
-      'INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)',
-      [id, name, email, hashedPassword, role]
-    );
-  }
+  await query(
+    'INSERT INTO users (id, name, email, password, role) VALUES ($1, $2, $3, $4, $5)',
+    [id, name, email, hashedPassword, role]
+  );
   return { id, name, email, role };
 }
 
 // Initialize database
 export async function initDb() {
-  const db = await getDb();
-  
-  if (isProd) {
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS users (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          email TEXT UNIQUE NOT NULL,
-          password TEXT NOT NULL,
-          role TEXT NOT NULL DEFAULT 'USER',
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'USER',
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS prompts (
-          id TEXT PRIMARY KEY,
-          title TEXT NOT NULL,
-          content TEXT NOT NULL,
-          specialty TEXT,
-          is_default BOOLEAN DEFAULT false,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS prompts (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      specialty TEXT,
+      is_default BOOLEAN DEFAULT false,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS reports (
-          id TEXT PRIMARY KEY,
-          title TEXT NOT NULL,
-          findings TEXT NOT NULL,
-          report TEXT NOT NULL,
-          specialty TEXT,
-          prompt_id TEXT,
-          user_id TEXT NOT NULL,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (user_id) REFERENCES users(id),
-          FOREIGN KEY (prompt_id) REFERENCES prompts(id)
-        )
-      `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS reports (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      findings TEXT NOT NULL,
+      report TEXT NOT NULL,
+      specialty TEXT,
+      prompt_id TEXT,
+      user_id TEXT NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (prompt_id) REFERENCES prompts(id)
+    )
+  `);
 
-      // Create indexes for better performance
-      await db.query(`
-        CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
-        CREATE INDEX IF NOT EXISTS idx_reports_specialty ON reports(specialty);
-        CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);
-      `);
-    } catch (error) {
-      console.error('Error initializing PostgreSQL database:', error);
-      throw error;
-    }
-  } else {
-    try {
-      await db.exec(`
-        CREATE TABLE IF NOT EXISTS users (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          email TEXT UNIQUE NOT NULL,
-          password TEXT NOT NULL,
-          role TEXT NOT NULL DEFAULT 'USER',
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      await db.exec(`
-        CREATE TABLE IF NOT EXISTS prompts (
-          id TEXT PRIMARY KEY,
-          title TEXT NOT NULL,
-          content TEXT NOT NULL,
-          specialty TEXT,
-          is_default BOOLEAN DEFAULT false,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      await db.exec(`
-        CREATE TABLE IF NOT EXISTS reports (
-          id TEXT PRIMARY KEY,
-          title TEXT NOT NULL,
-          findings TEXT NOT NULL,
-          report TEXT NOT NULL,
-          specialty TEXT,
-          prompt_id TEXT,
-          user_id TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (user_id) REFERENCES users(id),
-          FOREIGN KEY (prompt_id) REFERENCES prompts(id)
-        )
-      `);
-
-      // Create indexes for better performance
-      await db.exec(`
-        CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
-        CREATE INDEX IF NOT EXISTS idx_reports_specialty ON reports(specialty);
-        CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);
-      `);
-    } catch (error) {
-      console.error('Error initializing SQLite database:', error);
-      throw error;
-    }
-  }
+  // Create indexes for better performance
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
+    CREATE INDEX IF NOT EXISTS idx_reports_specialty ON reports(specialty);
+    CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);
+  `);
 }
