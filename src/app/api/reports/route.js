@@ -105,11 +105,11 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { title, content, specialty, patientInfo, systemPrompt, generatedReport } = await request.json();
+    const { title, content, specialty, generatedReport } = await request.json();
 
-    if (!title || !content) {
+    if (!title || !content || !generatedReport) {
       return NextResponse.json(
-        { error: 'Title and findings content are required' },
+        { error: 'Title, findings content, and generated report are required' },
         { status: 400 }
       );
     }
@@ -121,17 +121,15 @@ export async function POST(request) {
       // Insert the report
       await db.query(
         `INSERT INTO reports (
-          id, title, findings, report, specialty, patient_info, system_prompt,
+          id, title, findings, report, specialty,
           user_id, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           id,
           title,
           content, // User's input findings
-          generatedReport || null, // OpenAI generated report
+          generatedReport, // OpenAI generated report
           specialty || null,
-          patientInfo ? JSON.stringify(patientInfo) : null,
-          systemPrompt || null,
           session.user.id,
           now,
           now
@@ -163,10 +161,8 @@ export async function POST(request) {
         id,
         title,
         content, // Original user input (findings)
-        generatedReport: generatedReport || null, // OpenAI generated report
+        generatedReport, // OpenAI generated report
         specialty,
-        patient_info: patientInfo,
-        system_prompt: systemPrompt,
         user_id: session.user.id,
         created_at: now,
         updated_at: now
