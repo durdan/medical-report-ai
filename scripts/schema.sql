@@ -1,3 +1,8 @@
+-- Drop existing tables if they exist
+DROP TABLE IF EXISTS reports;
+DROP TABLE IF EXISTS prompts;
+DROP TABLE IF EXISTS users;
+
 -- Create users table
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
