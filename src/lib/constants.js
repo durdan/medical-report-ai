@@ -1,0 +1,22 @@
+export const MEDICAL_SPECIALTIES = [
+  'General',
+  'Radiology',
+  'Cardiology',
+  'Neurology',
+  'Orthopedics',
+  'Pediatrics',
+  'Internal Medicine',
+  'Surgery',
+  'Oncology',
+  'Dermatology',
+  'Psychiatry',
+  'Obstetrics & Gynecology',
+  'Ophthalmology',
+  'ENT',
+  'Urology',
+  'Endocrinology',
+  'Gastroenterology',
+  'Pulmonology',
+  'Rheumatology',
+  'Emergency Medicine'
+].sort();

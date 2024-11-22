@@ -1,0 +1,8 @@
+{
+  "id": "default-1",
+  "name": "General Medical Report",
+  "specialty": "General",
+  "promptText": "You are a professional medical report generator. Generate a clear, concise, and accurate medical report based on the provided findings.",
+  "isDefault": true,
+  "createdAt": "2024-11-22T13:35:48.847Z"
+}
