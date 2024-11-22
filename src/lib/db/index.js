@@ -9,30 +9,31 @@ import crypto from 'crypto';
 const isProd = process.env.NODE_ENV === 'production';
 
 let pool = null;
+let sqliteDb = null;
 
 export async function getDb() {
   if (isProd) {
     if (!pool) {
       pool = new Pool({
-        connectionString: process.env.POSTGRES_URL_NON_POOLING
+        connectionString: process.env.POSTGRES_URL_NON_POOLING,
+        max: 1
       });
+
+      // Test the connection
+      try {
+        const client = await pool.connect();
+        await client.query('SELECT NOW()');
+        client.release();
+      } catch (error) {
+        console.error('Database connection error:', error);
+        pool = null;
+        throw error;
+      }
     }
     return pool;
   }
   
   // SQLite for development
-  let sqliteDb = null;
-  
-  async function ensureDataDir() {
-    const dataDir = path.join(process.cwd(), 'data');
-    try {
-      await fs.access(dataDir);
-    } catch {
-      await fs.mkdir(dataDir);
-    }
-    return dataDir;
-  }
-
   if (!sqliteDb) {
     const dataDir = await ensureDataDir();
     const dbPath = path.join(dataDir, 'dev.db');
@@ -44,13 +45,28 @@ export async function getDb() {
   return sqliteDb;
 }
 
+async function ensureDataDir() {
+  const dataDir = path.join(process.cwd(), 'data');
+  try {
+    await fs.access(dataDir);
+  } catch {
+    await fs.mkdir(dataDir);
+  }
+  return dataDir;
+}
+
 // User operations
 export async function getUserByEmail(email) {
   const db = await getDb();
   
   if (isProd) {
-    const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-    return result.rows[0];
+    try {
+      const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+      return result.rows[0];
+    } catch (error) {
+      console.error('Error in getUserByEmail:', error);
+      throw error;
+    }
   } else {
     return db.get('SELECT * FROM users WHERE email = ?', [email]);
   }
@@ -60,8 +76,13 @@ export async function getUserById(id) {
   const db = await getDb();
   
   if (isProd) {
-    const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
-    return result.rows[0];
+    try {
+      const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+      return result.rows[0];
+    } catch (error) {
+      console.error('Error in getUserById:', error);
+      throw error;
+    }
   } else {
     return db.get('SELECT * FROM users WHERE id = ?', [id]);
   }
@@ -73,10 +94,15 @@ export async function createUser({ name, email, password, role = 'USER' }) {
   const id = crypto.randomUUID();
 
   if (isProd) {
-    await db.query(
-      'INSERT INTO users (id, name, email, password, role) VALUES ($1, $2, $3, $4, $5)',
-      [id, name, email, hashedPassword, role]
-    );
+    try {
+      await db.query(
+        'INSERT INTO users (id, name, email, password, role) VALUES ($1, $2, $3, $4, $5)',
+        [id, name, email, hashedPassword, role]
+      );
+    } catch (error) {
+      console.error('Error in createUser:', error);
+      throw error;
+    }
   } else {
     await db.run(
       'INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)',
