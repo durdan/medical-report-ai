@@ -39,6 +39,7 @@ export default function MedicalReportGenerator() {
   useEffect(() => {
     if (prompts.length > 0 && selectedPrompt.id) {
       const promptData = prompts.find(p => p.id === selectedPrompt.id);
+      console.log('Selected prompt data:', promptData);
       setSelectedPromptData(promptData);
     }
   }, [selectedPrompt, prompts]);
@@ -54,7 +55,12 @@ export default function MedicalReportGenerator() {
       }
       
       console.log('Fetched prompts:', data.prompts);
-      setPrompts(data.prompts);
+      // Map the content field to promptText if needed
+      const mappedPrompts = data.prompts.map(prompt => ({
+        ...prompt,
+        promptText: prompt.content || prompt.promptText
+      }));
+      setPrompts(mappedPrompts);
     } catch (error) {
       console.error('Error fetching prompts:', error);
       setError('Failed to load prompts');
@@ -299,18 +305,23 @@ export default function MedicalReportGenerator() {
                 </div>
 
                 {selectedPromptData && (
-                  <div className="bg-gray-50 p-4 rounded-md">
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className="text-sm font-medium text-gray-900">
+                  <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
+                    <div className="flex justify-between items-start mb-4">
+                      <h3 className="text-lg font-medium text-gray-900">
                         {selectedPromptData.name}
                       </h3>
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
                         {selectedPromptData.specialty}
                       </span>
                     </div>
-                    <p className="text-sm text-gray-600 whitespace-pre-wrap">
-                      {selectedPromptData.promptText}
-                    </p>
+                    <div className="prose prose-blue max-w-none">
+                      <pre className="text-base text-gray-700 whitespace-pre-wrap leading-relaxed bg-transparent border-none p-0">
+                        {selectedPromptData.promptText}
+                      </pre>
+                      {!selectedPromptData.promptText && (
+                        <p className="text-red-600">No prompt content available</p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

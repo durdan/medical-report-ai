@@ -77,6 +77,7 @@ export async function GET(request) {
         'SELECT id, title as name, content as promptText, specialty, is_system as isDefault, created_at as createdAt FROM prompts WHERE is_system = true OR user_id = $1 ORDER BY created_at DESC',
         [session.user.id]
       );
+      console.log('Production prompts:', result.rows);
       return NextResponse.json({ prompts: result.rows || [] });
     } 
     
@@ -99,6 +100,7 @@ export async function GET(request) {
         createdAt: new Date().toISOString()
       }
     ];
+    console.log('Development prompts:', mockPrompts);
     return NextResponse.json({ prompts: mockPrompts });
   } catch (error) {
     console.error('Error fetching prompts:', error);
