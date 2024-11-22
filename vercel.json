@@ -15,5 +15,13 @@
       "NEXTAUTH_URL": "https://${VERCEL_URL}",
       "NODE_ENV": "production"
     }
+  },
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 60
+    },
+    "app/api/**/*.js": {
+      "maxDuration": 60
+    }
   }
 }
