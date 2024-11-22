@@ -13,19 +13,12 @@ const getPool = () => {
   if (!isProd) return null;
 
   const connectionString = process.env.POSTGRES_URL;
-  const [protocol, rest] = connectionString.split('://');
-  const [credentials, hostPortDb] = rest.split('@');
-  const [username, password] = credentials.split(':');
-  const [hostPort, database] = hostPortDb.split('/');
-  const [host, port] = hostPort.split(':');
-
+  
   return new Pool({
-    user: username,
-    password,
-    host,
-    port: parseInt(port),
-    database: database.split('?')[0],
-    ssl: true
+    connectionString,
+    ssl: {
+      rejectUnauthorized: false
+    }
   });
 };
 
