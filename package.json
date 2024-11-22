@@ -2,13 +2,16 @@
   "name": "medical-report-ai",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "create-admin": "NODE_OPTIONS='--experimental-json-modules' node scripts/create-admin.js"
   },
   "dependencies": {
+    "@vercel/postgres": "^0.10.0",
     "bcryptjs": "^2.4.3",
     "next": "14.0.3",
     "next-auth": "^4.24.5",

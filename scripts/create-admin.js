@@ -1,18 +1,16 @@
-import pkg from 'pg';
-const { Pool } = pkg;
+import { createPool } from '@vercel/postgres';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 
 async function createAdmin() {
   try {
-    // Use production database connection
-    const pool = new Pool({
-      connectionString: process.env.POSTGRES_URL_NON_POOLING,
-      max: 1
+    // Use Vercel Postgres connection
+    const pool = createPool({
+      connectionString: process.env.POSTGRES_URL_NON_POOLING
     });
 
     // Create tables if they don't exist
-    await pool.query(`
+    await pool.sql`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -22,7 +20,7 @@ async function createAdmin() {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       )
-    `);
+    `;
 
     // Hash the password
     const hashedPassword = await bcrypt.hash(
@@ -36,10 +34,10 @@ async function createAdmin() {
     const email = process.env.ADMIN_EMAIL || 'admin@example.com';
 
     // Insert the admin user
-    await pool.query(
-      'INSERT INTO users (id, name, email, password, role) VALUES ($1, $2, $3, $4, $5)',
-      [id, name, email, hashedPassword, 'ADMIN']
-    );
+    await pool.sql`
+      INSERT INTO users (id, name, email, password, role)
+      VALUES (${id}, ${name}, ${email}, ${hashedPassword}, 'ADMIN')
+    `;
 
     console.log('Admin user created successfully:', {
       name,
@@ -47,7 +45,6 @@ async function createAdmin() {
       role: 'ADMIN'
     });
 
-    await pool.end();
     process.exit(0);
   } catch (error) {
     console.error('Failed to create admin user:', error);
