@@ -2,7 +2,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 import { getOpenAIClient } from '@/lib/openai';
-import db_operations from '@/lib/db';
+import { dbPool } from '@/lib/db';
 
 export async function POST(req) {
   try {
@@ -20,25 +20,33 @@ export async function POST(req) {
       );
     }
 
-    const db = await db_operations;
+    let systemPrompt, userPrompt;
 
-    // Get system prompt
-    const systemPrompt = await db.get(
-      'SELECT prompt_text FROM prompts WHERE is_system = ? AND (specialty = ? OR specialty = "General") ORDER BY specialty = "General" LIMIT 1',
-      [1, specialty]
-    );
-
-    // Get user prompt
-    const userPrompt = await db.get(
-      'SELECT prompt_text FROM prompts WHERE id = ?',
-      [promptId]
-    );
-
-    if (!userPrompt) {
-      return NextResponse.json(
-        { error: 'Prompt not found' },
-        { status: 404 }
+    if (process.env.NODE_ENV === 'production') {
+      // Get system prompt from PostgreSQL
+      const systemResult = await dbPool.query(
+        'SELECT prompt_text FROM prompts WHERE is_system = true AND (specialty = $1 OR specialty = $2) ORDER BY specialty = $2 LIMIT 1',
+        [specialty, 'General']
       );
+      systemPrompt = systemResult.rows[0];
+
+      // Get user prompt if promptId is provided
+      if (promptId) {
+        const userResult = await dbPool.query(
+          'SELECT prompt_text FROM prompts WHERE id = $1',
+          [promptId]
+        );
+        userPrompt = userResult.rows[0];
+      }
+    } else {
+      // Development mock data
+      systemPrompt = {
+        prompt_text: 'You are a medical report assistant. Generate accurate and professional medical reports.'
+      };
+      
+      userPrompt = {
+        prompt_text: 'Generate a detailed medical report based on the following findings, focusing on clarity and medical accuracy.'
+      };
     }
 
     const openaiClient = await getOpenAIClient();
@@ -50,7 +58,7 @@ export async function POST(req) {
       },
       {
         role: 'user',
-        content: `${userPrompt.prompt_text}\n\nFindings:\n${findings}`
+        content: `${userPrompt?.prompt_text || 'Please generate a detailed medical report based on these findings:'}\n\nFindings:\n${findings}`
       }
     ];
 

@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import db_operations from '@/lib/db';
+import { getDb } from '@/lib/db';
 import crypto from 'crypto';
+
+const isProd = process.env.NODE_ENV === 'production';
 
 async function getSession(request) {
   const session = await getServerSession(authOptions);
@@ -17,77 +19,135 @@ export async function GET(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Initialize database if needed
-    await db_operations.initializeDatabase();
-
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get('page')) || 1;
     const limit = parseInt(searchParams.get('limit')) || 10;
     const search = searchParams.get('search') || '';
     const sortBy = searchParams.get('sortBy') || 'created_at';
-    const sortOrder = searchParams.get('sortOrder') || 'DESC';
+    const sortOrder = searchParams.get('sortOrder')?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
     const offset = (page - 1) * limit;
 
-    console.log('Session user:', session.user);
-
-    // Base queries
-    let countQuery = 'SELECT COUNT(*) as total FROM reports';
-    let query = `
-      SELECT reports.*, users.email as user_email 
-      FROM reports 
-      LEFT JOIN users ON reports.user_id = users.id
-    `;
-
-    const params = [];
+    const db = await getDb();
     
-    // Add WHERE clause based on user role
-    if (session.user.role !== 'ADMIN') {
-      countQuery += ' WHERE user_id = ?';
-      query += ' WHERE reports.user_id = ?';
-      params.push(session.user.id);
-    }
+    if (isProd) {
+      // Production: PostgreSQL
+      const client = await db.connect();
+      
+      try {
+        // Build query parts
+        const conditions = [];
+        const params = [];
+        let paramIndex = 1;
 
-    // Add search condition if provided
-    if (search) {
-      const whereOrAnd = params.length === 0 ? ' WHERE' : ' AND';
-      const searchCondition = `${whereOrAnd} (title LIKE ? OR content LIKE ?)`;
-      countQuery += searchCondition;
-      query += searchCondition;
-      params.push(`%${search}%`, `%${search}%`);
-    }
+        // Add user condition
+        if (session.user.role !== 'ADMIN') {
+          conditions.push(`reports.user_id = $${paramIndex}`);
+          params.push(session.user.id);
+          paramIndex++;
+        }
 
-    // Add sorting and pagination
-    query += ` ORDER BY ${sortBy} ${sortOrder}`;
-    
-    // Execute count query
-    console.log('Count Query:', countQuery, 'Params:', params);
-    const totalCount = await db_operations.get(countQuery, params);
-    
-    // Add pagination to main query
-    query += ' LIMIT ? OFFSET ?';
-    const queryParams = [...params, limit, offset];
-    
-    // Execute main query
-    console.log('Main Query:', query, 'Params:', queryParams);
-    const reports = await db_operations.all(query, queryParams);
+        // Add search condition if provided
+        if (search) {
+          conditions.push(`(title ILIKE $${paramIndex} OR findings ILIKE $${paramIndex} OR report ILIKE $${paramIndex})`);
+          params.push(`%${search}%`);
+          paramIndex++;
+        }
 
-    console.log('Total count:', totalCount);
-    console.log('Reports found:', reports);
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    return NextResponse.json({
-      reports,
-      pagination: {
-        currentPage: page,
-        totalPages: Math.ceil(totalCount.total / limit),
-        totalItems: totalCount.total,
-        itemsPerPage: limit
+        // Get total count
+        const countQuery = `
+          SELECT COUNT(*) as total 
+          FROM reports 
+          ${whereClause}
+        `;
+        
+        const countResult = await client.query(countQuery, params);
+        const totalCount = parseInt(countResult.rows[0].total);
+
+        // Get paginated reports
+        const reportsQuery = `
+          SELECT 
+            reports.*, 
+            users.email as user_email
+          FROM reports 
+          LEFT JOIN users ON reports.user_id = users.id
+          ${whereClause}
+          ORDER BY reports.${sortBy} ${sortOrder}
+          LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        `;
+
+        const reportsResult = await client.query(
+          reportsQuery,
+          [...params, limit, offset]
+        );
+
+        return NextResponse.json({
+          reports: reportsResult.rows,
+          pagination: {
+            currentPage: page,
+            totalPages: Math.ceil(totalCount / limit),
+            totalItems: totalCount,
+            itemsPerPage: limit
+          }
+        });
+
+      } finally {
+        client.release();
       }
-    });
+    } else {
+      // Development: SQLite
+      const conditions = [];
+      const params = [];
 
+      // Add user condition
+      if (session.user.role !== 'ADMIN') {
+        conditions.push('reports.user_id = ?');
+        params.push(session.user.id);
+      }
+
+      if (search) {
+        conditions.push('(title LIKE ? OR findings LIKE ? OR report LIKE ?)');
+        params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      // Get total count
+      const countResult = await db.get(
+        `SELECT COUNT(*) as total FROM reports ${whereClause}`,
+        params
+      );
+      
+      const totalCount = countResult.total;
+
+      // Get paginated reports
+      const reports = await db.all(
+        `SELECT 
+          reports.*, 
+          users.email as user_email
+        FROM reports 
+        LEFT JOIN users ON reports.user_id = users.id
+        ${whereClause}
+        ORDER BY reports.${sortBy} ${sortOrder}
+        LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      );
+
+      return NextResponse.json({
+        reports,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(totalCount / limit),
+          totalItems: totalCount,
+          itemsPerPage: limit
+        }
+      });
+    }
   } catch (error) {
     console.error('Error in GET /api/reports:', error);
     return NextResponse.json(
-      { error: 'Internal Server Error' },
+      { error: 'Failed to fetch reports: ' + error.message },
       { status: 500 }
     );
   }
@@ -111,9 +171,6 @@ export async function POST(request) {
       );
     }
 
-    // Initialize database
-    await db_operations.initializeDatabase();
-
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     
@@ -124,35 +181,78 @@ export async function POST(request) {
       user_id: session.user.id
     });
 
-    await db_operations.run(
-      `INSERT INTO reports (
-        id, title, content, specialty, patient_info, system_prompt,
-        user_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
+    if (isProd) {
+      const client = await db.connect();
+      
+      try {
+        await client.query(
+          `INSERT INTO reports (
+            id, title, content, specialty, patient_info, system_prompt,
+            user_id, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            id,
+            title,
+            content,
+            specialty || null,
+            patientInfo || null,
+            systemPrompt || null,
+            session.user.id,
+            now,
+            now
+          ]
+        );
+
+        const report = await client.query(
+          'SELECT * FROM reports WHERE id = $1',
+          [id]
+        );
+
+        return NextResponse.json(
+          { message: 'Report created successfully', report: report.rows[0] },
+          { status: 201 }
+        );
+      } finally {
+        client.release();
+      }
+    } else {
+      // Development: SQLite
+      const report = {
         id,
         title,
         content,
-        specialty || null,
-        patientInfo || null,
-        systemPrompt || null,
-        session.user.id,
-        now,
-        now
-      ]
-    );
+        specialty,
+        patientInfo,
+        systemPrompt,
+        user_id: session.user.id,
+        user_email: session.user.email,
+        created_at: now,
+        updated_at: now
+      };
 
-    const report = await db_operations.get(
-      'SELECT * FROM reports WHERE id = ?',
-      [id]
-    );
+      await db.run(
+        `INSERT INTO reports (
+          id, title, content, specialty, patient_info, system_prompt,
+          user_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          title,
+          content,
+          specialty || null,
+          patientInfo || null,
+          systemPrompt || null,
+          session.user.id,
+          now,
+          now
+        ]
+      );
 
-    console.log('Created report:', report);
-
-    return NextResponse.json(
-      { message: 'Report created successfully', report },
-      { status: 201 }
-    );
+      return NextResponse.json(
+        { message: 'Report created successfully', report },
+        { status: 201 }
+      );
+    }
   } catch (error) {
     console.error('Error creating report:', error);
     return NextResponse.json(

@@ -282,15 +282,18 @@ export default function MedicalReportGenerator() {
                   </label>
                   <div className="flex items-center space-x-4">
                     <select
-                      value={selectedPrompt.id}
+                      value={selectedPrompt?.id || 'default'}
                       onChange={(e) => setSelectedPrompt({ id: e.target.value })}
                       className="flex-grow rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     >
-                      {prompts.map(prompt => (
-                        <option key={prompt.id} value={prompt.id}>
-                          {prompt.name} ({prompt.specialty})
-                        </option>
-                      ))}
+                      <option value="default">Default Prompt</option>
+                      {prompts && prompts.length > 0 ? (
+                        prompts.map(prompt => (
+                          <option key={prompt.id} value={prompt.id}>
+                            {prompt.name} ({prompt.specialty})
+                          </option>
+                        ))
+                      ) : null}
                     </select>
                   </div>
                 </div>

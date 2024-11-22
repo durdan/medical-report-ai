@@ -1,10 +1,22 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { NextResponse } from 'next/server';
-import db_operations from '@/lib/db';
+import { Pool } from 'pg';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+
+const isProd = process.env.NODE_ENV === 'production';
+
+// Database connection setup
+const pool = new Pool({
+  connectionString: isProd 
+    ? process.env.POSTGRES_URL
+    : process.env.DATABASE_URL,
+  ssl: isProd ? {
+    rejectUnauthorized: false
+  } : false
+});
 
 const PROMPTS_DIR = path.join(process.cwd(), 'data', 'prompts');
 
@@ -65,49 +77,53 @@ async function initializeDefaultPrompts() {
 
 export async function GET(request) {
   try {
-    // Check authentication
+    // Get user from session
     const session = await getServerSession(authOptions);
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log('Fetching prompts for user:', session.user);
-
-    let prompts;
-    if (session.user.role === 'ADMIN') {
-      // Admin sees all prompts
-      prompts = await db_operations.all(`
-        SELECT * FROM prompts 
-        ORDER BY is_default DESC, created_at DESC
-      `);
-    } else {
-      // Regular users see their prompts and default prompts
-      prompts = await db_operations.all(`
-        SELECT * FROM prompts 
-        WHERE user_id = ? OR is_default = 1
-        ORDER BY is_default DESC, created_at DESC
-      `, [session.user.id]);
-    }
-
-    console.log('Found prompts:', prompts);
-
-    // Format the response
-    const formattedPrompts = prompts.map(prompt => ({
-      id: prompt.id,
-      name: prompt.name,
-      promptText: prompt.prompt_text,
-      specialty: prompt.specialty,
-      isDefault: Boolean(prompt.is_default),
-      userId: prompt.user_id,
-      createdAt: prompt.created_at,
-      updatedAt: prompt.updated_at
-    }));
-
-    return NextResponse.json({ prompts: formattedPrompts });
+    // In production, use PostgreSQL
+    if (isProd) {
+      const result = await pool.query(
+        'SELECT * FROM prompts WHERE is_system = true OR user_id = $1 ORDER BY created_at DESC',
+        [session.user.id]
+      );
+      return NextResponse.json({ prompts: result.rows });
+    } 
+    
+    // In development, return mock data
+    const mockPrompts = [
+      {
+        id: 'default-1',
+        name: 'General Medical Report',
+        promptText: 'Generate a comprehensive medical report based on the following findings...',
+        specialty: 'General',
+        isDefault: true,
+        isSystem: true,
+        userId: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      },
+      {
+        id: 'default-2',
+        name: 'Cardiology Report',
+        promptText: 'Generate a detailed cardiology report based on the following findings...',
+        specialty: 'Cardiology',
+        isDefault: true,
+        isSystem: true,
+        userId: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    ];
+    
+    return NextResponse.json({ prompts: mockPrompts });
+    
   } catch (error) {
-    console.error('Error fetching prompts:', error);
+    console.error('Error in GET /api/prompts:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch prompts: ' + error.message },
+      { error: 'Failed to fetch prompts' },
       { status: 500 }
     );
   }
@@ -115,44 +131,49 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    // Check authentication
     const session = await getServerSession(authOptions);
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { name, promptText, specialty } = await request.json();
+    const data = await request.json();
+    const { name, promptText, specialty, isDefault = false } = data;
 
-    // Validate required fields
     if (!name || !promptText || !specialty) {
       return NextResponse.json(
-        { error: 'Name, prompt text, and specialty are required' },
+        { error: 'Missing required fields' },
         { status: 400 }
       );
     }
 
-    const promptId = `prompt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    await db_operations.run(`
-      INSERT INTO prompts (id, name, prompt_text, specialty, user_id, is_default)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [promptId, name, promptText, specialty, session.user.id, 0]);
+    if (isProd) {
+      const result = await pool.query(
+        `INSERT INTO prompts (name, prompt_text, specialty, is_default, user_id)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [name, promptText, specialty, isDefault, session.user.id]
+      );
+      return NextResponse.json({ prompt: result.rows[0] });
+    }
 
-    return NextResponse.json({ 
-      success: true,
-      prompt: {
-        id: promptId,
-        name,
-        promptText,
-        specialty,
-        userId: session.user.id,
-        isDefault: false
-      }
-    });
+    // In development, return mock response
+    const mockPrompt = {
+      id: `mock-${Date.now()}`,
+      name,
+      promptText,
+      specialty,
+      isDefault,
+      userId: session.user.id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    return NextResponse.json({ prompt: mockPrompt });
+
   } catch (error) {
-    console.error('Error creating prompt:', error);
+    console.error('Error in POST /api/prompts:', error);
     return NextResponse.json(
-      { error: 'Failed to create prompt: ' + error.message },
+      { error: 'Failed to create prompt' },
       { status: 500 }
     );
   }
