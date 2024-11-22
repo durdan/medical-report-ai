@@ -17,12 +17,33 @@ const getPool = () => {
   return new Pool({
     connectionString,
     ssl: {
-      rejectUnauthorized: false
+      rejectUnauthorized: false,
+      requestCert: true
     }
   });
 };
 
-export const dbPool = getPool();
+let pool = null;
+
+export const dbPool = async () => {
+  if (!isProd) return null;
+  if (pool) return pool;
+
+  pool = getPool();
+  
+  // Test the connection
+  try {
+    const client = await pool.connect();
+    await client.query('SELECT NOW()');
+    client.release();
+    console.log('Successfully connected to PostgreSQL');
+    return pool;
+  } catch (error) {
+    console.error('Error connecting to PostgreSQL:', error);
+    pool = null;
+    throw error;
+  }
+};
 
 // SQLite connection for development
 let sqliteDb = null;
@@ -53,7 +74,7 @@ export async function getSqliteDb() {
 
 export async function getDb() {
   if (isProd) {
-    return dbPool;
+    return dbPool();
   }
   return getSqliteDb();
 }

@@ -1,39 +1,46 @@
-import bcrypt from 'bcryptjs';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import { getUserByEmail, createUser, initDb } from './db';
+import { getDb, getUserByEmail } from '@/lib/db';
+import bcrypt from 'bcryptjs';
 
 export const authOptions = {
   providers: [
     CredentialsProvider({
       name: 'Credentials',
       credentials: {
-        email: { label: "Email", type: "email" },
+        email: { label: "Email", type: "text" },
         password: { label: "Password", type: "password" }
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          throw new Error('Please enter an email and password');
+        try {
+          if (!credentials?.email || !credentials?.password) {
+            throw new Error('Email and password are required');
+          }
+
+          const db = await getDb();
+          const user = await getUserByEmail(credentials.email);
+
+          if (!user) {
+            console.error('No user found with email:', credentials.email);
+            return null;
+          }
+
+          const isValid = await bcrypt.compare(credentials.password, user.password);
+
+          if (!isValid) {
+            console.error('Invalid password for user:', credentials.email);
+            return null;
+          }
+
+          return {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role
+          };
+        } catch (error) {
+          console.error('Error in authorize:', error);
+          throw error;
         }
-
-        await initDb();
-        const user = await getUserByEmail(credentials.email);
-
-        if (!user) {
-          throw new Error('No user found with this email');
-        }
-
-        const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
-
-        if (!isPasswordValid) {
-          throw new Error('Invalid password');
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role
-        };
       }
     })
   ],
@@ -55,10 +62,8 @@ export const authOptions = {
   },
   pages: {
     signIn: '/auth/signin',
+    error: '/auth/error'
   },
   secret: process.env.NEXTAUTH_SECRET,
-  session: {
-    strategy: 'jwt'
-  },
-  debug: process.env.NODE_ENV === 'development',
+  debug: process.env.NODE_ENV === 'development'
 };
