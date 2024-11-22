@@ -86,7 +86,7 @@ export async function GET(request) {
     // In production, use PostgreSQL
     if (isProd) {
       const result = await pool.query(
-        'SELECT * FROM prompts WHERE is_system = true OR user_id = $1 ORDER BY created_at DESC',
+        'SELECT id, title as name, content as promptText, specialty, is_system as isDefault, created_at, updated_at FROM prompts WHERE is_system = true OR user_id = $1 ORDER BY created_at DESC',
         [session.user.id]
       );
       return NextResponse.json({ prompts: result.rows });
@@ -100,32 +100,21 @@ export async function GET(request) {
         promptText: 'Generate a comprehensive medical report based on the following findings...',
         specialty: 'General',
         isDefault: true,
-        isSystem: true,
-        userId: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        createdAt: new Date().toISOString()
       },
       {
         id: 'default-2',
-        name: 'Cardiology Report',
-        promptText: 'Generate a detailed cardiology report based on the following findings...',
-        specialty: 'Cardiology',
+        name: 'Radiology Report',
+        promptText: 'Generate a detailed radiology report based on the provided imaging findings...',
+        specialty: 'Radiology',
         isDefault: true,
-        isSystem: true,
-        userId: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        createdAt: new Date().toISOString()
       }
     ];
-    
     return NextResponse.json({ prompts: mockPrompts });
-    
   } catch (error) {
-    console.error('Error in GET /api/prompts:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch prompts' },
-      { status: 500 }
-    );
+    console.error('Error fetching prompts:', error);
+    return NextResponse.json({ error: 'Failed to fetch prompts' }, { status: 500 });
   }
 }
 
