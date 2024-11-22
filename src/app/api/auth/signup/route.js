@@ -1,68 +1,53 @@
-import bcrypt from 'bcryptjs';
 import { NextResponse } from 'next/server';
-import { getDb, initDb } from '@/lib/db';
-import crypto from 'crypto';
+import { createUser, initDb } from '@/lib/db';
 
 export async function POST(request) {
   try {
     const { name, email, password } = await request.json();
 
-    // Validate input
     if (!name || !email || !password) {
       return NextResponse.json(
-        { error: 'Missing required fields' },
+        { error: 'Name, email, and password are required' },
         { status: 400 }
       );
     }
 
-    // Initialize database if needed
-    await initDb();
-    const db = await getDb();
-
-    // Check if user already exists
-    const existingUser = await db.get(
-      'SELECT * FROM users WHERE email = ?',
-      [email]
-    );
-
-    if (existingUser) {
+    // Initialize database first
+    try {
+      await initDb();
+      console.log('Database initialized successfully');
+    } catch (error) {
+      console.error('Database initialization error:', error);
       return NextResponse.json(
-        { error: 'User already exists with this email' },
-        { status: 400 }
+        { error: 'Failed to initialize database: ' + error.message },
+        { status: 500 }
       );
     }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Generate a unique ID
-    const id = crypto.randomUUID();
 
     // Create user
-    await db.run(
-      'INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)',
-      [id, name, email, hashedPassword, 'USER']
-    );
-
-    // Get the created user
-    const user = await db.get(
-      'SELECT id, name, email, role FROM users WHERE id = ?',
-      [id]
-    );
-
-    return NextResponse.json({
-      success: true,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role
+    try {
+      const user = await createUser({ name, email, password });
+      console.log('User created successfully:', user.email);
+      return NextResponse.json({ user }, { status: 201 });
+    } catch (error) {
+      console.error('User creation error:', error);
+      
+      if (error.code === '23505') { // Unique violation in PostgreSQL
+        return NextResponse.json(
+          { error: 'Email already exists' },
+          { status: 409 }
+        );
       }
-    });
+
+      return NextResponse.json(
+        { error: 'Failed to create user: ' + error.message },
+        { status: 500 }
+      );
+    }
   } catch (error) {
-    console.error('Signup error:', error);
+    console.error('Signup route error:', error);
     return NextResponse.json(
-      { error: 'Failed to create user: ' + error.message },
+      { error: 'Internal server error: ' + error.message },
       { status: 500 }
     );
   }

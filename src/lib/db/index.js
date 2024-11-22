@@ -14,9 +14,14 @@ let sqliteDb = null;
 export async function getDb() {
   if (isProd) {
     if (!pool) {
+      // Remove any existing sslmode from the URL
+      const baseUrl = process.env.POSTGRES_URL_NON_POOLING.split('?')[0];
+      
       pool = new Pool({
-        connectionString: process.env.POSTGRES_URL_NON_POOLING,
-        max: 1
+        connectionString: `${baseUrl}?sslmode=no-verify`,
+        max: 1,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000
       });
 
       // Test the connection
@@ -24,6 +29,7 @@ export async function getDb() {
         const client = await pool.connect();
         await client.query('SELECT NOW()');
         client.release();
+        console.log('Successfully connected to PostgreSQL');
       } catch (error) {
         console.error('Database connection error:', error);
         pool = null;
