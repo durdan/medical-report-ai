@@ -1,10 +1,14 @@
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
+import { Pool } = require('pg');
 import path from 'path';
 import bcrypt from 'bcryptjs';
 import fs from 'fs/promises';
 
 let db = null;
+let pgPool = null;
+
+const isProd = process.env.NODE_ENV === 'production';
 
 // SQL statements that work in both SQLite and PostgreSQL
 const CREATE_TABLES_SQL = `
@@ -49,49 +53,113 @@ const CREATE_TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
   CREATE INDEX IF NOT EXISTS idx_reports_specialty ON reports(specialty);
   CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);
-  CREATE INDEX IF NOT EXISTS idx_prompts_user_id ON prompts(user_id);
-  CREATE INDEX IF NOT EXISTS idx_prompts_specialty ON prompts(specialty);
 `;
 
+const pool = new Pool({
+  connectionString: process.env.NODE_ENV === 'production' 
+    ? process.env.POSTGRES_URL
+    : process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? {
+    rejectUnauthorized: false
+  } : false
+});
+
 async function initializeDatabase() {
-  if (db) return db;
+  if (isProd) {
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name TEXT,
+          email TEXT UNIQUE NOT NULL,
+          password TEXT NOT NULL,
+          role TEXT DEFAULT 'USER',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
 
-  const dbPath = path.join(process.cwd(), 'data', 'dev.db');
-  console.log('Initializing database at:', dbPath);
+        CREATE TABLE IF NOT EXISTS prompts (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name TEXT NOT NULL,
+          prompt_text TEXT NOT NULL,
+          specialty TEXT NOT NULL,
+          is_default BOOLEAN DEFAULT false,
+          is_system BOOLEAN DEFAULT false,
+          user_id UUID REFERENCES users(id),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
 
-  try {
-    await fs.mkdir(path.dirname(dbPath), { recursive: true });
-  } catch (error) {
-    if (error.code !== 'EEXIST') {
+        CREATE TABLE IF NOT EXISTS reports (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          title TEXT NOT NULL,
+          findings TEXT NOT NULL,
+          report TEXT NOT NULL,
+          specialty TEXT NOT NULL,
+          prompt_id UUID REFERENCES prompts(id),
+          user_id UUID REFERENCES users(id) NOT NULL,
+          is_archived BOOLEAN DEFAULT false,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
+        CREATE INDEX IF NOT EXISTS idx_reports_specialty ON reports(specialty);
+        CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);
+        CREATE INDEX IF NOT EXISTS idx_prompts_specialty ON prompts(specialty);
+        CREATE INDEX IF NOT EXISTS idx_prompts_user_id ON prompts(user_id);
+      `);
+      console.log('PostgreSQL database initialized');
+    } catch (error) {
+      console.error('Error initializing PostgreSQL:', error);
       throw error;
+    }
+  } else {
+    // Development SQLite connection
+    if (!db) {
+      const dbPath = path.join(process.cwd(), 'data', 'dev.db');
+      const dbDir = path.dirname(dbPath);
+
+      try {
+        await fs.access(dbDir);
+      } catch {
+        await fs.mkdir(dbDir, { recursive: true });
+      }
+
+      db = await open({
+        filename: dbPath,
+        driver: sqlite3.Database,
+      });
+
+      await db.exec('PRAGMA foreign_keys = ON');
+      await db.exec(CREATE_TABLES_SQL);
+      console.log('SQLite database initialized');
     }
   }
 
-  db = await open({
-    filename: dbPath,
-    driver: sqlite3.Database
-  });
+  // Create default admin user and prompts
+  const adminUser = isProd 
+    ? await pool.query('SELECT * FROM users WHERE email = $1', ['admin@example.com'])
+    : await db.get('SELECT * FROM users WHERE email = ?', ['admin@example.com']);
 
-  // Enable foreign keys and WAL mode for better performance
-  await db.exec('PRAGMA foreign_keys = ON;');
-  await db.exec('PRAGMA journal_mode = WAL;');
-
-  // Create tables
-  await db.exec(CREATE_TABLES_SQL);
-
-  // Check if admin user exists
-  const adminUser = await db.get('SELECT * FROM users WHERE email = ?', ['admin@example.com']);
-  
   if (!adminUser) {
     console.log('Creating default admin user...');
     const adminId = 'admin-' + Date.now();
     const hashedPassword = await bcrypt.hash('admin123', 10);
-    await db.run(
-      'INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)',
-      [adminId, 'Admin User', 'admin@example.com', hashedPassword, 'ADMIN']
-    );
+    
+    if (isProd) {
+      await pool.query(
+        'INSERT INTO users (id, name, email, password, role) VALUES ($1, $2, $3, $4, $5)',
+        [adminId, 'Admin User', 'admin@example.com', hashedPassword, 'ADMIN']
+      );
+    } else {
+      await db.run(
+        'INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)',
+        [adminId, 'Admin User', 'admin@example.com', hashedPassword, 'ADMIN']
+      );
+    }
 
-    // Create default prompts
+    // Create default prompts with proper parameterization
     const defaultPrompts = [
       {
         id: 'system-prompt-' + Date.now(),
@@ -140,48 +208,83 @@ async function initializeDatabase() {
       }
     ];
 
-    // Insert prompts with transaction
-    await db.run('BEGIN TRANSACTION');
+    if (isProd) {
+      await pool.query('BEGIN');
+    } else {
+      await db.run('BEGIN TRANSACTION');
+    }
+
     try {
       for (const prompt of defaultPrompts) {
-        await db.run(`
-          INSERT INTO prompts (id, name, prompt_text, specialty, is_default, is_system, user_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `, [prompt.id, prompt.name, prompt.prompt_text, prompt.specialty, prompt.is_default ? 1 : 0, prompt.is_system ? 1 : 0, prompt.user_id]);
+        if (isProd) {
+          await pool.query(
+            `INSERT INTO prompts (id, name, prompt_text, specialty, is_default, is_system, user_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [prompt.id, prompt.name, prompt.prompt_text, prompt.specialty, 
+             prompt.is_default, prompt.is_system, prompt.user_id]
+          );
+        } else {
+          await db.run(
+            `INSERT INTO prompts (id, name, prompt_text, specialty, is_default, is_system, user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [prompt.id, prompt.name, prompt.prompt_text, prompt.specialty,
+             prompt.is_default ? 1 : 0, prompt.is_system ? 1 : 0, prompt.user_id]
+          );
+        }
       }
-      await db.run('COMMIT');
+      
+      if (isProd) {
+        await pool.query('COMMIT');
+      } else {
+        await db.run('COMMIT');
+      }
       console.log('Default prompts created successfully');
     } catch (error) {
-      await db.run('ROLLBACK');
+      if (isProd) {
+        await pool.query('ROLLBACK');
+      } else {
+        await db.run('ROLLBACK');
+      }
       console.error('Error creating default prompts:', error);
       throw error;
     }
   }
-
-  return db;
 }
 
-async function get(query, params = []) {
-  if (!db) await initializeDatabase();
-  console.log('Executing query:', query, 'with params:', params);
-  return db.get(query, params);
+// PostgreSQL query function
+async function query(text, params = []) {
+  if (!isProd) throw new Error('PostgreSQL queries only available in production');
+  const result = await pool.query(text, params);
+  return result.rows[0];
 }
 
-async function all(query, params = []) {
-  if (!db) await initializeDatabase();
-  console.log('Executing query:', query, 'with params:', params);
-  return db.all(query, params);
+// PostgreSQL queryAll function
+async function queryAll(text, params = []) {
+  if (!isProd) throw new Error('PostgreSQL queries only available in production');
+  const result = await pool.query(text, params);
+  return result.rows;
 }
 
-async function run(query, params = []) {
-  if (!db) await initializeDatabase();
-  console.log('Executing query:', query, 'with params:', params);
-  return db.run(query, params);
+// SQLite functions
+async function get(sql, params = []) {
+  if (isProd) throw new Error('SQLite queries only available in development');
+  return db.get(sql, params);
 }
 
+async function all(sql, params = []) {
+  if (isProd) throw new Error('SQLite queries only available in development');
+  return db.all(sql, params);
+}
+
+async function run(sql, params = []) {
+  if (isProd) throw new Error('SQLite queries only available in development');
+  return db.run(sql, params);
+}
+
+// Unified database interface
 export default {
+  query: isProd ? query : get,
+  queryAll: isProd ? queryAll : all,
+  run: isProd ? query : run,
   initializeDatabase,
-  get,
-  all,
-  run
 };

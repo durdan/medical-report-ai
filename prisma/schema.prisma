@@ -6,12 +6,12 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("POSTGRES_URL")
 }
 
 model Account {
-  id                String  @id @default(cuid())
+  id                String  @id @default(uuid())
   userId            String
   type              String
   provider          String
@@ -30,7 +30,7 @@ model Account {
 }
 
 model Session {
-  id           String   @id @default(cuid())
+  id           String   @id @default(uuid())
   sessionToken String   @unique
   userId       String
   expires      DateTime
@@ -38,19 +38,21 @@ model Session {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String    @unique
+  id         String   @id @default(uuid())
+  name       String?
+  email      String   @unique
   emailVerified DateTime?
-  password      String?
-  image         String?
-  role          String    @default("USER")
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  accounts      Account[]
-  sessions      Session[]
-  reports       Report[]
-  prompts       Prompt[]
+  password   String
+  image      String?
+  role       String   @default("USER")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  accounts   Account[]
+  sessions   Session[]
+  reports    Report[]
+  prompts    Prompt[]
+
+  @@map("users")
 }
 
 model VerificationToken {
@@ -62,36 +64,39 @@ model VerificationToken {
 }
 
 model Report {
-  id          String   @id @default(cuid())
-  title       String
-  findings    String   @db.Text
-  report      String   @db.Text
-  specialty   String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  promptId    String?
-  prompt      Prompt?  @relation(fields: [promptId], references: [id])
-  isArchived  Boolean  @default(false)
-  
+  id         String   @id @default(uuid())
+  title      String
+  findings   String   @db.Text
+  report     String   @db.Text
+  specialty  String
+  promptId   String?  @map("prompt_id")
+  userId     String   @map("user_id")
+  isArchived Boolean  @default(false) @map("is_archived")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  user       User     @relation(fields: [userId], references: [id])
+  prompt     Prompt?  @relation(fields: [promptId], references: [id])
+
+  @@map("reports")
   @@index([userId])
   @@index([specialty])
   @@index([createdAt])
 }
 
 model Prompt {
-  id          String   @id @default(cuid())
-  name        String
-  promptText  String   @db.Text
-  specialty   String
-  isDefault   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reports     Report[]
-  
+  id         String   @id @default(uuid())
+  name       String
+  promptText String   @db.Text @map("prompt_text")
+  specialty  String
+  isDefault  Boolean  @default(false) @map("is_default")
+  isSystem   Boolean  @default(false) @map("is_system")
+  userId     String?  @map("user_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  user       User?    @relation(fields: [userId], references: [id])
+  reports    Report[]
+
+  @@map("prompts")
   @@index([userId])
   @@index([specialty])
 }

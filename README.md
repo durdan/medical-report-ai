@@ -1,168 +1,162 @@
-# Medical Report AI Generator
+# Medical Report AI
 
-## Overview
-A Next.js web application that leverages OpenAI's GPT models to generate and refine medical reports across various specialties. This application helps medical specialists streamline their report writing process using AI assistance.
+A Next.js application for generating and managing medical reports using AI, with robust authentication and database integration.
 
-## Key Features
-1. AI-Powered Report Generation
-   - Dynamic medical specialty selection
-   - Customizable system prompts with real-time preview
-   - Advanced report generation with GPT models
-   - Interactive report refinement capabilities
+## Features
 
-2. Intuitive User Interface
-   - Clean, modern design with Tailwind CSS
-   - Real-time system prompt preview
-   - Responsive layout for all devices
-   - Clear error handling and loading states
+- 🔐 **Authentication System**
+  - NextAuth-based authentication
+  - Role-based access control (USER, ADMIN)
+  - Custom signup and signin flows
+  - Secure password handling
 
-3. Report Management
-   - Save and organize generated reports
-   - Copy reports to clipboard
-   - Edit and refine existing reports
-   - Dashboard view for all reports
+- 📝 **Report Generation**
+  - AI-powered medical report creation
+  - Specialty-specific report generation
+  - Flexible prompt management
+  - System and user-defined prompts
 
-4. System Prompt Management
-   - Specialty-specific prompt templates
-   - Full prompt preview and selection
-   - Custom prompt creation and editing
-   - Default prompt management
+- 🗄️ **Database Management**
+  - SQLite for development
+  - PostgreSQL for production
+  - Comprehensive schema
+  - Foreign key constraints and indexes
 
-## Technical Stack
-- Frontend: Next.js 14 (React)
-- AI Integration: OpenAI API
-- Styling: Tailwind CSS
-- State Management: React Hooks
-- Database: SQLite (dev) / PostgreSQL (prod)
+## Getting Started
 
-## Project Structure
-```
-medical-report-ai/
-├── src/
-│   ├── app/
-│   │   ├── page.js              # Report generation page
-│   │   ├── dashboard/
-│   │   │   └── page.js          # Reports dashboard
-│   │   ├── api/
-│   │   │   ├── reports/         # Report-related API routes
-│   │   │   └── prompts/         # Prompt-related API routes
-│   │   ├── layout.js            # Root layout
-│   │   └── globals.css          # Global styles
-│   └── lib/
-│       ├── openai.js            # OpenAI integration
-│       └── constants.js         # App constants
-├── public/                      # Static assets
-├── data/                        # Data storage
-├── reports/                     # Generated reports
-└── config/                      # Configuration files
-```
+### Prerequisites
 
-## Prerequisites
-- Node.js (v18+)
-- OpenAI API Key
+- Node.js 18+
 - npm or yarn
-- Git
+- SQLite (development)
+- PostgreSQL (production)
 
-## Setup Instructions
+### Installation
 
-1. Clone the repository
+1. Clone the repository:
 ```bash
 git clone https://github.com/yourusername/medical-report-ai.git
 cd medical-report-ai
 ```
 
-2. Install dependencies
+2. Install dependencies:
 ```bash
 npm install
 ```
 
-3. Configure environment variables
-Copy `.env.example` to `.env` and configure:
-```env
-# OpenAI API Key
-OPENAI_API_KEY=your_openai_api_key_here
-NEXTAUTH_SECRET=your_nextauth_secret_here
-DATABASE_URL="file:./dev.db"
-
-# OpenAI Configuration
-AI_MODEL="gpt-3.5-turbo"
-AI_TEMPERATURE=0.7
-AI_MAX_TOKENS=1000
-
-# Development vs Production
-NODE_ENV=development
+3. Set up environment variables:
+```bash
+cp .env.example .env.local
 ```
+Edit `.env.local` with your configuration.
 
-4. Run the development server
+4. Run the development server:
 ```bash
 npm run dev
 ```
 
-## Features in Detail
+### Production Deployment
 
-### Report Generation
-- Select from specialty-specific system prompts
-- Enter medical findings in a dedicated text area
-- Generate AI-powered medical reports
-- Real-time loading states and error handling
+1. Set up PostgreSQL database
+2. Configure environment variables in Vercel
+3. Deploy to Vercel:
+```bash
+vercel
+```
 
-### Report Dashboard
-- View all generated reports
-- Filter by specialty and date
-- Sort reports by various criteria
-- Quick actions for each report
+## Environment Variables
 
-### System Prompts
-- View and select from available prompts
-- See full prompt text before generation
-- Create and edit custom prompts
-- Manage prompt defaults per specialty
+### Development
+```env
+DATABASE_URL="file:./dev.db"
+NEXTAUTH_SECRET=your-nextauth-secret
+OPENAI_API_KEY=your-openai-api-key
+NODE_ENV=development
+```
 
-## API Endpoints
+### Production
+```env
+POSTGRES_URL=your-postgres-connection-string
+NEXTAUTH_SECRET=your-nextauth-secret
+OPENAI_API_KEY=your-openai-api-key
+NODE_ENV=production
+NEXTAUTH_URL=https://your-domain.vercel.app
+```
+
+## Database Schema
+
+### Users
+- id (TEXT PRIMARY KEY)
+- name (TEXT)
+- email (TEXT UNIQUE)
+- password (TEXT)
+- role (TEXT)
+- created_at (TIMESTAMP)
+- updated_at (TIMESTAMP)
+
+### Prompts
+- id (TEXT PRIMARY KEY)
+- name (TEXT)
+- prompt_text (TEXT)
+- specialty (TEXT)
+- is_default (BOOLEAN)
+- is_system (BOOLEAN)
+- user_id (TEXT FOREIGN KEY)
+- created_at (TIMESTAMP)
+- updated_at (TIMESTAMP)
 
 ### Reports
-- `POST /api/reports/generate` - Generate new report
-- `POST /api/reports/refine` - Refine existing report
-- `POST /api/reports/save` - Save report
-- `GET /api/reports/list` - List all reports
+- id (TEXT PRIMARY KEY)
+- title (TEXT)
+- findings (TEXT)
+- report (TEXT)
+- specialty (TEXT)
+- prompt_id (TEXT FOREIGN KEY)
+- user_id (TEXT FOREIGN KEY)
+- is_archived (BOOLEAN)
+- created_at (TIMESTAMP)
+- updated_at (TIMESTAMP)
 
-### System Prompts
-- `GET /api/prompts` - List available prompts
-- `POST /api/prompts` - Create new prompt
-- `PUT /api/prompts/:id` - Update prompt
-- `DELETE /api/prompts/:id` - Delete prompt
+## Development
 
-## Development Progress
-- [x] Project setup and configuration
-- [x] OpenAI integration
-- [x] Main UI implementation
-- [x] Report generation
-- [x] Report refinement
-- [x] System prompt management
-- [x] Dashboard implementation
-- [x] Error handling
-- [ ] User authentication
-- [ ] Advanced filtering
-- [ ] Export functionality
-- [ ] Production deployment
+### Database Management
+- Development uses SQLite
+- Production uses PostgreSQL
+- Automatic schema creation
+- Default admin user creation
+- System prompts initialization
 
-## Security Considerations
-- Environment variables for sensitive data
-- Input validation and sanitization
-- Error handling and logging
-- Rate limiting for API calls
+### Authentication
+- JWT-based authentication
+- Role-based access control
+- Secure password handling
+- Protected API routes
+
+### Report Generation
+- OpenAI GPT integration
+- Specialty-specific prompts
+- System prompt guidance
+- Customizable AI parameters
+
+## Production Deployment
+
+1. Create a new project on Vercel
+2. Connect your repository
+3. Configure environment variables:
+   - `POSTGRES_URL`
+   - `NEXTAUTH_SECRET`
+   - `OPENAI_API_KEY`
+   - `NODE_ENV=production`
+4. Deploy the application
 
 ## Contributing
+
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
-MIT License
 
-## Acknowledgments
-- OpenAI for their powerful GPT models
-- Next.js team for the amazing framework
-- Tailwind CSS for the styling system
+This project is licensed under the MIT License.
