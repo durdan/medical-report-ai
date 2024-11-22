@@ -8,75 +8,40 @@ import crypto from 'crypto';
 
 const isProd = process.env.NODE_ENV === 'production';
 
-// Parse the connection string for production
-const getPool = () => {
-  if (!isProd) return null;
-
-  const connectionString = process.env.POSTGRES_URL;
-  
-  return new Pool({
-    connectionString,
-    ssl: {
-      rejectUnauthorized: false,
-      requestCert: true
-    }
-  });
-};
-
 let pool = null;
-
-export const dbPool = async () => {
-  if (!isProd) return null;
-  if (pool) return pool;
-
-  pool = getPool();
-  
-  // Test the connection
-  try {
-    const client = await pool.connect();
-    await client.query('SELECT NOW()');
-    client.release();
-    console.log('Successfully connected to PostgreSQL');
-    return pool;
-  } catch (error) {
-    console.error('Error connecting to PostgreSQL:', error);
-    pool = null;
-    throw error;
-  }
-};
-
-// SQLite connection for development
-let sqliteDb = null;
-
-async function ensureDataDir() {
-  const dataDir = path.join(process.cwd(), 'data');
-  try {
-    await fs.access(dataDir);
-  } catch {
-    await fs.mkdir(dataDir);
-  }
-  return dataDir;
-}
-
-export async function getSqliteDb() {
-  if (sqliteDb) return sqliteDb;
-  
-  const dataDir = await ensureDataDir();
-  const dbPath = path.join(dataDir, 'dev.db');
-  
-  sqliteDb = await open({
-    filename: dbPath,
-    driver: sqlite3.Database
-  });
-  
-  return sqliteDb;
-}
 
 export async function getDb() {
   if (isProd) {
-    return dbPool();
+    if (!pool) {
+      pool = new Pool({
+        connectionString: process.env.POSTGRES_URL_NON_POOLING
+      });
+    }
+    return pool;
   }
-  return getSqliteDb();
+  
+  // SQLite for development
+  let sqliteDb = null;
+  
+  async function ensureDataDir() {
+    const dataDir = path.join(process.cwd(), 'data');
+    try {
+      await fs.access(dataDir);
+    } catch {
+      await fs.mkdir(dataDir);
+    }
+    return dataDir;
+  }
+
+  if (!sqliteDb) {
+    const dataDir = await ensureDataDir();
+    const dbPath = path.join(dataDir, 'dev.db');
+    sqliteDb = await open({
+      filename: dbPath,
+      driver: sqlite3.Database
+    });
+  }
+  return sqliteDb;
 }
 
 // User operations
