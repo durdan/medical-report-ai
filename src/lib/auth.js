@@ -1,6 +1,6 @@
 import CredentialsProvider from 'next-auth/providers/credentials';
-import { getDb } from '@/lib/db';
 import bcrypt from 'bcryptjs';
+import { getUserByEmail } from './user';
 
 export const authOptions = {
   providers: [
@@ -16,15 +16,7 @@ export const authOptions = {
             throw new Error('Email and password are required');
           }
 
-          const db = await getDb();
-          let user;
-          
-          if (process.env.NODE_ENV === 'production') {
-            const result = await db.query('SELECT * FROM users WHERE email = $1', [credentials.email]);
-            user = result.rows[0];
-          } else {
-            user = await db.get('SELECT * FROM users WHERE email = ?', [credentials.email]);
-          }
+          const user = await getUserByEmail(credentials.email);
 
           if (!user) {
             console.error('No user found with email:', credentials.email);

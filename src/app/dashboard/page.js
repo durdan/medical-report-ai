@@ -2,30 +2,24 @@
 
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import Pagination from '@/components/Pagination';
 import AdvancedFilters from '@/components/AdvancedFilters';
 import EditReportModal from '@/components/EditReportModal';
 import EditPromptModal from '@/components/EditPromptModal';
 import ExportMenu from '@/components/ExportMenu';
+import { jsPDF } from 'jspdf';
 
 const ITEMS_PER_PAGE = 10;
 
 export default function Dashboard() {
   const router = useRouter();
   const { data: session } = useSession();
-  const [activeTab, setActiveTab] = useState('reports');
   const [reports, setReports] = useState([]);
-  const [prompts, setPrompts] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [editingReport, setEditingReport] = useState(null);
-  const [editingPrompt, setEditingPrompt] = useState(null);
-  const [sortBy, setSortBy] = useState('created_at');
-  const [sortOrder, setSortOrder] = useState('DESC');
+  const [error, setError] = useState(null);
+  const [copySuccess, setCopySuccess] = useState('');
 
   useEffect(() => {
     if (!session) {
@@ -34,30 +28,28 @@ export default function Dashboard() {
     }
 
     fetchReports();
-  }, [session, currentPage, searchTerm, sortBy, sortOrder]);
+  }, [session]);
 
   const fetchReports = async () => {
     try {
       setLoading(true);
-      const params = new URLSearchParams({
-        page: currentPage,
-        limit: ITEMS_PER_PAGE,
-        search: searchTerm,
-        sortBy,
-        sortOrder
-      });
+      setError(null);
 
-      const response = await fetch(`/api/reports?${params}`);
+      const response = await fetch('/api/reports/list');
       const data = await response.json();
 
       if (!response.ok) {
         throw new Error(data.error || 'Error fetching reports');
       }
 
-      setReports(data.reports);
-      setTotalPages(data.pagination.totalPages);
+      if (data.success && Array.isArray(data.reports)) {
+        setReports(data.reports);
+      } else {
+        setReports([]);
+      }
     } catch (error) {
       console.error('Error fetching reports:', error);
+      setError(error.message);
     } finally {
       setLoading(false);
     }
@@ -67,28 +59,87 @@ export default function Dashboard() {
     router.push('/report-generator');
   };
 
-  const handleTabChange = (tab) => {
-    setActiveTab(tab);
-    const url = new URL(window.location);
-    url.searchParams.set('tab', tab);
-    window.history.pushState({}, '', url);
+  const handleDeleteReport = async (reportId) => {
+    if (!confirm('Are you sure you want to delete this report?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/reports/delete/${reportId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete report');
+      }
+
+      // Refresh the reports list
+      fetchReports();
+    } catch (error) {
+      console.error('Error deleting report:', error);
+      alert('Failed to delete report');
+    }
   };
 
-  const handleSearch = (event) => {
-    setSearchTerm(event.target.value);
-    setCurrentPage(1);
+  const copyToClipboard = async (report) => {
+    try {
+      const formattedReport = `
+Medical Report
+=============
+Title: ${report.title}
+Specialty: ${report.specialty}
+Date: ${new Date(report.created_at).toLocaleDateString()}
+
+Findings:
+${report.findings}
+
+Report:
+${report.report}
+`;
+
+      await navigator.clipboard.writeText(formattedReport);
+      setCopySuccess('Report copied!');
+      setTimeout(() => setCopySuccess(''), 2000);
+    } catch (err) {
+      console.error('Failed to copy report:', err);
+      alert('Failed to copy report to clipboard');
+    }
   };
 
-  const handlePageChange = (page) => {
-    setCurrentPage(page);
-  };
-
-  const handleSort = (field) => {
-    if (sortBy === field) {
-      setSortOrder(sortOrder === 'ASC' ? 'DESC' : 'ASC');
-    } else {
-      setSortBy(field);
-      setSortOrder('DESC');
+  const exportToPDF = (report) => {
+    try {
+      const doc = new jsPDF();
+      
+      // Add title
+      doc.setFontSize(20);
+      doc.text('Medical Report', 20, 20);
+      
+      // Add metadata
+      doc.setFontSize(12);
+      doc.text(`Title: ${report.title}`, 20, 35);
+      doc.text(`Specialty: ${report.specialty}`, 20, 45);
+      doc.text(`Date: ${new Date(report.created_at).toLocaleDateString()}`, 20, 55);
+      
+      // Add findings
+      doc.setFontSize(14);
+      doc.text('Findings:', 20, 70);
+      doc.setFontSize(12);
+      const findingsLines = doc.splitTextToSize(report.findings, 170);
+      doc.text(findingsLines, 20, 80);
+      
+      // Add report
+      const yPosition = 80 + (findingsLines.length * 7);
+      doc.setFontSize(14);
+      doc.text('Report:', 20, yPosition);
+      doc.setFontSize(12);
+      const reportLines = doc.splitTextToSize(report.report, 170);
+      doc.text(reportLines, 20, yPosition + 10);
+      
+      // Save the PDF
+      doc.save(`medical-report-${report.id}.pdf`);
+    } catch (err) {
+      console.error('Failed to export PDF:', err);
+      alert('Failed to export report as PDF');
     }
   };
 
@@ -106,7 +157,6 @@ export default function Dashboard() {
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
                 <p className="text-gray-600">Welcome, {session.user.email}</p>
-                <p className="text-gray-600">Role: {session.user.role}</p>
               </div>
               <button
                 onClick={handleNewReport}
@@ -117,26 +167,13 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Search and Filters */}
-          <div className="px-6 py-4 border-b border-gray-200">
-            <div className="flex gap-4">
-              <input
-                type="text"
-                placeholder="Search reports..."
-                value={searchTerm}
-                onChange={handleSearch}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-
           {/* Reports */}
           <div className="mt-6 px-6">
-            <h3 className="text-lg font-semibold mb-4">
-              {session.user.role === 'admin' ? 'All Reports' : 'Your Reports'}
-            </h3>
+            <h3 className="text-lg font-semibold mb-4">Your Reports</h3>
             {loading ? (
               <p className="text-gray-600">Loading...</p>
+            ) : error ? (
+              <p className="text-red-600">{error}</p>
             ) : reports.length === 0 ? (
               <p className="text-gray-600">No reports found. Create your first report!</p>
             ) : (
@@ -144,19 +181,29 @@ export default function Dashboard() {
                 {reports.map((report) => (
                   <div key={report.id} className="border rounded-lg p-4">
                     <h4 className="text-lg font-medium">{report.title}</h4>
-                    <p className="text-gray-600 mt-2">{report.content}</p>
+                    <p className="text-gray-600 mt-2">Specialty: {report.specialty}</p>
+                    <p className="text-gray-600">Findings: {report.findings}</p>
                     <div className="mt-2 text-sm text-gray-500">
                       Created: {new Date(report.created_at).toLocaleString()}
-                      {session.user.role === 'admin' && (
-                        <span className="ml-4">By: {report.user_email}</span>
-                      )}
                     </div>
-                    <div className="mt-2 text-sm text-gray-500">
+                    <div className="mt-2 space-x-4">
                       <button
-                        onClick={() => setEditingReport(report)}
-                        className="text-blue-600 hover:text-blue-900 mr-4"
+                        onClick={() => router.push(`/report-generator?id=${report.id}`)}
+                        className="text-blue-600 hover:text-blue-900"
                       >
                         Edit
+                      </button>
+                      <button
+                        onClick={() => copyToClipboard(report)}
+                        className="text-green-600 hover:text-green-900"
+                      >
+                        Copy
+                      </button>
+                      <button
+                        onClick={() => exportToPDF(report)}
+                        className="text-purple-600 hover:text-purple-900"
+                      >
+                        Export PDF
                       </button>
                       <button
                         onClick={() => handleDeleteReport(report.id)}
@@ -165,36 +212,16 @@ export default function Dashboard() {
                         Delete
                       </button>
                     </div>
+                    {copySuccess && (
+                      <div className="mt-2 text-sm text-green-600">{copySuccess}</div>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
-
-          {/* Pagination */}
-          {!loading && reports.length > 0 && (
-            <div className="px-6 py-4 border-t border-gray-200">
-              <Pagination
-                currentPage={currentPage}
-                totalPages={totalPages}
-                onPageChange={handlePageChange}
-              />
-            </div>
-          )}
         </div>
       </div>
-
-      {/* Modals */}
-      {editingReport && (
-        <EditReportModal
-          report={editingReport}
-          onClose={() => setEditingReport(null)}
-          onSave={() => {
-            setEditingReport(null);
-            fetchReports();
-          }}
-        />
-      )}
     </div>
   );
 }

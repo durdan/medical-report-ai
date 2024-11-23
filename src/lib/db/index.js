@@ -1,159 +1,109 @@
 import { Pool } from 'pg';
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
-import bcrypt from 'bcryptjs';
-import fs from 'fs/promises';
-import path from 'path';
-import crypto from 'crypto';
+import bcrypt from 'bcrypt';
 
-const isProd = process.env.NODE_ENV === 'production';
-
-let pool = null;
-let sqliteDb = null;
-
-export async function getDb() {
-  if (isProd) {
-    if (!pool) {
-      // Remove any existing sslmode from the URL and add no-verify
-      const baseUrl = process.env.POSTGRES_URL_NON_POOLING.split('?')[0];
-      pool = new Pool({
-        connectionString: `${baseUrl}?sslmode=no-verify`,
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
-      });
-
-      pool.on('error', (err) => {
-        console.error('Unexpected error on idle client', err);
-        process.exit(-1);
-      });
-
-      pool.on('connect', () => {
-        console.log('Connected to the database');
-      });
-    }
-    return pool;
-  }
-
-  // SQLite for development
-  if (!sqliteDb) {
-    const dataDir = await ensureDataDir();
-    const dbPath = path.join(dataDir, 'dev.db');
-    sqliteDb = await open({
-      filename: dbPath,
-      driver: sqlite3.Database
-    });
-  }
-  return sqliteDb;
-}
-
-async function ensureDataDir() {
-  const dataDir = path.join(process.cwd(), 'data');
-  try {
-    await fs.access(dataDir);
-  } catch {
-    await fs.mkdir(dataDir);
-  }
-  return dataDir;
-}
+const pool = new Pool({
+  user: process.env.POSTGRES_USER,
+  host: process.env.POSTGRES_HOST,
+  database: process.env.POSTGRES_DATABASE,
+  password: process.env.POSTGRES_PASSWORD,
+  port: 5432,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+});
 
 export const db = {
-  query: async (text, params) => {
-    const db = await getDb();
-    if (isProd) {
-      return db.query(text, params);
-    } else {
-      // Convert PostgreSQL query to SQLite syntax
-      const sqliteQuery = text
-        .replace(/\$\d+/g, '?')
-        .replace(/NOW\(\)/g, "datetime('now')")
-        .replace(/RETURNING \*/g, '');
-      
-      return db.all(sqliteQuery, params);
-    }
-  },
-  close: async () => {
-    if (pool) {
-      await pool.end();
-      pool = null;
-    }
-    if (sqliteDb) {
-      await sqliteDb.close();
-      sqliteDb = null;
-    }
-  }
+  query: (text, params) => pool.query(text, params),
 };
 
-export { getDb };
-
-// User operations
-export async function getUserByEmail(email) {
-  const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-  return result.rows[0];
-}
-
-export async function getUserById(id) {
-  const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
-  return result.rows[0];
-}
-
-export async function createUser({ name, email, password, role = 'USER' }) {
+export const createUser = async (email, password, name) => {
   const hashedPassword = await bcrypt.hash(password, 10);
-  const id = crypto.randomUUID();
-
-  await db.query(
-    'INSERT INTO users (id, name, email, password, role) VALUES ($1, $2, $3, $4, $5)',
-    [id, name, email, hashedPassword, role]
+  const result = await pool.query(
+    'INSERT INTO users (email, password, name, role) VALUES ($1, $2, $3, $4) RETURNING id, email, name, role',
+    [email, hashedPassword, name, 'USER']
   );
-  return { id, name, email, role };
-}
+  return result.rows[0];
+};
 
-// Initialize database
-export async function initDb() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'USER',
-      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+export const getUserByEmail = async (email) => {
+  const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+  return result.rows[0];
+};
 
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS prompts (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      content TEXT NOT NULL,
-      specialty TEXT,
-      is_default BOOLEAN DEFAULT false,
-      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+export const getUserById = async (id) => {
+  const result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+  return result.rows[0];
+};
 
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS reports (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      findings TEXT NOT NULL,
-      report TEXT NOT NULL,
-      specialty TEXT,
-      prompt_id TEXT,
-      user_id TEXT NOT NULL,
-      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id),
-      FOREIGN KEY (prompt_id) REFERENCES prompts(id)
-    )
-  `);
+export const verifyPassword = async (password, hashedPassword) => {
+  return bcrypt.compare(password, hashedPassword);
+};
 
-  // Create indexes for better performance
-  await db.query(`
-    CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
-    CREATE INDEX IF NOT EXISTS idx_reports_specialty ON reports(specialty);
-    CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);
-  `);
-}
+export const createReport = async (userId, title, findings, report, specialty, promptId) => {
+  const result = await pool.query(
+    'INSERT INTO reports (user_id, title, findings, report, specialty, prompt_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+    [userId, title, findings, report, specialty, promptId]
+  );
+  return result.rows[0];
+};
+
+export const updateReport = async (reportId, userId, title, findings, report, specialty, promptId) => {
+  const result = await pool.query(
+    'UPDATE reports SET title = $1, findings = $2, report = $3, specialty = $4, prompt_id = $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6 AND user_id = $7 RETURNING *',
+    [title, findings, report, specialty, promptId, reportId, userId]
+  );
+  return result.rows[0];
+};
+
+export const deleteReport = async (reportId, userId) => {
+  const result = await pool.query(
+    'DELETE FROM reports WHERE id = $1 AND user_id = $2 RETURNING *',
+    [reportId, userId]
+  );
+  return result.rows[0];
+};
+
+export const getReportById = async (reportId, userId) => {
+  const result = await pool.query(
+    'SELECT r.*, p.title as prompt_title, p.specialty as prompt_specialty FROM reports r LEFT JOIN prompts p ON r.prompt_id = p.id WHERE r.id = $1 AND r.user_id = $2',
+    [reportId, userId]
+  );
+  return result.rows[0];
+};
+
+export const listReports = async (userId) => {
+  const result = await pool.query(
+    'SELECT r.*, p.title as prompt_title FROM reports r LEFT JOIN prompts p ON r.prompt_id = p.id WHERE r.user_id = $1 ORDER BY r.created_at DESC',
+    [userId]
+  );
+  return result.rows;
+};
+
+export const createPrompt = async (title, content, specialty) => {
+  const result = await pool.query(
+    'INSERT INTO prompts (title, content, specialty) VALUES ($1, $2, $3) RETURNING *',
+    [title, content, specialty]
+  );
+  return result.rows[0];
+};
+
+export const updatePrompt = async (id, title, content, specialty) => {
+  const result = await pool.query(
+    'UPDATE prompts SET title = $1, content = $2, specialty = $3 WHERE id = $4 RETURNING *',
+    [title, content, specialty, id]
+  );
+  return result.rows[0];
+};
+
+export const deletePrompt = async (id) => {
+  const result = await pool.query('DELETE FROM prompts WHERE id = $1 RETURNING *', [id]);
+  return result.rows[0];
+};
+
+export const getPromptById = async (id) => {
+  const result = await pool.query('SELECT * FROM prompts WHERE id = $1', [id]);
+  return result.rows[0];
+};
+
+export const listPrompts = async () => {
+  const result = await pool.query('SELECT * FROM prompts ORDER BY created_at DESC');
+  return result.rows;
+};

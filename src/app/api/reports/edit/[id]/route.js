@@ -2,26 +2,23 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
-import crypto from 'crypto';
 
-export async function POST(request) {
+export async function PUT(request, { params }) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { id } = params;
     const { findings, report, specialty, promptId } = await request.json();
-    
+
     if (!findings || !report || !specialty) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       );
     }
-
-    const title = `${specialty} Report - ${new Date().toLocaleDateString()}`;
-    const id = crypto.randomUUID();
 
     // Get user ID
     const userResult = await db.query(
@@ -35,32 +32,36 @@ export async function POST(request) {
 
     const userId = userResult.rows[0].id;
 
-    // Save report
+    // Verify report ownership
+    const ownershipCheck = await db.query(
+      'SELECT id FROM reports WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+
+    if (!ownershipCheck.rows[0]) {
+      return NextResponse.json(
+        { error: 'Report not found or unauthorized' },
+        { status: 404 }
+      );
+    }
+
+    // Update the report
     const reportResult = await db.query(
-      `INSERT INTO reports (
-        id, title, findings, report, specialty,
-        prompt_id, user_id, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      RETURNING *`,
-      [
-        id,
-        title,
-        findings,
-        report,
-        specialty,
-        promptId,
-        userId
-      ]
+      `UPDATE reports 
+       SET findings = $1, report = $2, specialty = $3, prompt_id = $4, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $5 AND user_id = $6
+       RETURNING *`,
+      [findings, report, specialty, promptId, id, userId]
     );
 
     return NextResponse.json({ 
-      success: true, 
+      success: true,
       report: reportResult.rows[0]
     });
   } catch (error) {
-    console.error('Error saving report:', error);
+    console.error('Error updating report:', error);
     return NextResponse.json(
-      { error: 'Failed to save report: ' + error.message },
+      { error: 'Failed to update report: ' + error.message },
       { status: 500 }
     );
   }

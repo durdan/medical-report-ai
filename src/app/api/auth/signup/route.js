@@ -1,53 +1,43 @@
 import { NextResponse } from 'next/server';
-import { createUser, initDb } from '@/lib/db';
+import { createUser, getUserByEmail } from '@/lib/db';
 
 export async function POST(request) {
   try {
-    const { name, email, password } = await request.json();
+    const data = await request.json();
+    const { email, password, name } = data;
 
-    if (!name || !email || !password) {
+    if (!email || !password || !name) {
       return NextResponse.json(
-        { error: 'Name, email, and password are required' },
+        { error: 'Missing required fields' },
         { status: 400 }
       );
     }
 
-    // Initialize database first
-    try {
-      await initDb();
-      console.log('Database initialized successfully');
-    } catch (error) {
-      console.error('Database initialization error:', error);
+    // Check if user already exists
+    const existingUser = await getUserByEmail(email);
+    if (existingUser) {
       return NextResponse.json(
-        { error: 'Failed to initialize database: ' + error.message },
-        { status: 500 }
+        { error: 'User already exists' },
+        { status: 409 }
       );
     }
 
-    // Create user
-    try {
-      const user = await createUser({ name, email, password });
-      console.log('User created successfully:', user.email);
-      return NextResponse.json({ user }, { status: 201 });
-    } catch (error) {
-      console.error('User creation error:', error);
-      
-      if (error.code === '23505') { // Unique violation in PostgreSQL
-        return NextResponse.json(
-          { error: 'Email already exists' },
-          { status: 409 }
-        );
+    // Create new user
+    const user = await createUser(email, password, name);
+
+    return NextResponse.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role
       }
-
-      return NextResponse.json(
-        { error: 'Failed to create user: ' + error.message },
-        { status: 500 }
-      );
-    }
+    });
   } catch (error) {
-    console.error('Signup route error:', error);
+    console.error('Error creating user:', error);
     return NextResponse.json(
-      { error: 'Internal server error: ' + error.message },
+      { error: 'Failed to create user: ' + error.message },
       { status: 500 }
     );
   }

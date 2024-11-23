@@ -2,9 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { MEDICAL_SPECIALTIES } from '@/lib/constants';
 
 export default function MedicalReportGenerator() {
+  const searchParams = useSearchParams();
+  const reportId = searchParams.get('id');
+  
   const [prompts, setPrompts] = useState([]);
   const [selectedPrompt, setSelectedPrompt] = useState({ id: 'default' });
   const [selectedPromptData, setSelectedPromptData] = useState(null);
@@ -18,6 +22,13 @@ export default function MedicalReportGenerator() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+
+  // Load existing report if editing
+  useEffect(() => {
+    if (reportId) {
+      fetchReport();
+    }
+  }, [reportId]);
 
   useEffect(() => {
     fetchPrompts();
@@ -43,6 +54,34 @@ export default function MedicalReportGenerator() {
       setSelectedPromptData(promptData);
     }
   }, [selectedPrompt, prompts]);
+
+  const fetchReport = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(`/api/reports/${reportId}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to fetch report');
+      }
+
+      // Set report data
+      setFindings(data.findings);
+      setReport(data.report);
+      setSpecialty(data.specialty);
+      setOriginalFindings(data.findings);
+      
+      // Set prompt if it exists
+      if (data.prompt_id) {
+        setSelectedPrompt({ id: data.prompt_id });
+      }
+    } catch (error) {
+      console.error('Error fetching report:', error);
+      setError('Failed to load report');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchPrompts = async () => {
     setError('');
@@ -147,8 +186,9 @@ export default function MedicalReportGenerator() {
     setError('');
 
     try {
-      const response = await fetch('/api/reports/save', {
-        method: 'POST',
+      const url = reportId ? `/api/reports/edit/${reportId}` : '/api/reports/save';
+      const response = await fetch(url, {
+        method: reportId ? 'PUT' : 'POST',
         headers: {
           'Content-Type': 'application/json',
         },

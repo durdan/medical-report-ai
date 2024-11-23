@@ -1,45 +1,62 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs/promises';
-import path from 'path';
-
-const PROMPTS_DIR = path.join(process.cwd(), 'data', 'prompts');
+import { getPromptById, updatePrompt, deletePrompt } from '@/lib/db';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 
 export async function GET(request, { params }) {
   try {
-    const promptPath = path.join(PROMPTS_DIR, `${params.id}.json`);
-    const promptData = await fs.readFile(promptPath, 'utf-8');
-    const prompt = JSON.parse(promptData);
-    return NextResponse.json({ prompt });
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const prompt = await getPromptById(params.id);
+    if (!prompt) {
+      return NextResponse.json({ error: 'Prompt not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ success: true, prompt });
   } catch (error) {
-    return NextResponse.json({ error: 'Prompt not found' }, { status: 404 });
+    console.error('Error fetching prompt:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch prompt' },
+      { status: 500 }
+    );
   }
 }
 
 export async function PUT(request, { params }) {
   try {
-    const promptPath = path.join(PROMPTS_DIR, `${params.id}.json`);
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const data = await request.json();
     
     // Validate required fields
-    if (!data.promptText || !data.name) {
+    if (!data.title || !data.content) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       );
     }
 
-    // Update prompt
-    const prompt = {
-      id: params.id,
-      promptText: data.promptText,
-      name: data.name,
-      specialty: data.specialty || 'General',
-      isDefault: false,
-      updatedAt: new Date().toISOString()
-    };
+    const updatedPrompt = await updatePrompt(
+      params.id,
+      data.title,
+      data.content,
+      data.specialty || 'General'
+    );
 
-    await fs.writeFile(promptPath, JSON.stringify(prompt, null, 2));
-    return NextResponse.json({ prompt });
+    if (!updatedPrompt) {
+      return NextResponse.json(
+        { error: 'Prompt not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ success: true, prompt: updatedPrompt });
   } catch (error) {
     console.error('Error updating prompt:', error);
     return NextResponse.json(
@@ -51,10 +68,22 @@ export async function PUT(request, { params }) {
 
 export async function DELETE(request, { params }) {
   try {
-    const promptPath = path.join(PROMPTS_DIR, `${params.id}.json`);
-    await fs.unlink(promptPath);
-    return NextResponse.json({ success: true });
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const deletedPrompt = await deletePrompt(params.id);
+    if (!deletedPrompt) {
+      return NextResponse.json(
+        { error: 'Prompt not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ success: true, prompt: deletedPrompt });
   } catch (error) {
+    console.error('Error deleting prompt:', error);
     return NextResponse.json(
       { error: 'Failed to delete prompt' },
       { status: 500 }
