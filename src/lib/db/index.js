@@ -6,63 +6,28 @@ let pool;
 const createPool = () => {
   const connectionString = process.env.POSTGRES_URL;
   
-  const poolConfig = {
-    max: 5, // Reduced from 20
-    idleTimeoutMillis: 0, // Disable idle timeout
-    connectionTimeoutMillis: 10000, // Increased to 10 seconds
-    statement_timeout: 20000, // Increased to 20 seconds
-    query_timeout: 20000,    // Increased to 20 seconds
-    keepAlive: true,
-    keepAliveInitialDelayMillis: 0,
-    ssl: process.env.NODE_ENV === 'production' ? {
-      rejectUnauthorized: false,
-      checkServerIdentity: () => undefined // Skip hostname checks
-    } : false
+  const config = {
+    connectionString,
+    max: 5,
+    // Only add SSL configuration for production (Vercel)
+    ...(process.env.NODE_ENV === 'production' && {
+      ssl: {
+        rejectUnauthorized: false
+      }
+    })
   };
 
-  if (connectionString) {
-    return new Pool({
-      ...poolConfig,
-      connectionString,
-    });
-  }
-
-  return new Pool({
-    ...poolConfig,
-    user: process.env.POSTGRES_USER,
-    host: process.env.POSTGRES_HOST,
-    database: process.env.POSTGRES_DATABASE,
-    password: process.env.POSTGRES_PASSWORD,
-    port: 5432,
-  });
+  return new Pool(config);
 };
 
 const initializePool = async () => {
   if (!pool) {
     try {
       pool = createPool();
-      
-      // Test the connection with a longer timeout
-      const client = await Promise.race([
-        pool.connect(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connection timeout')), 10000)
-        )
-      ]);
-
+      const client = await pool.connect();
       const result = await client.query('SELECT NOW()');
       client.release();
-      
       console.log('Database connection successful:', result.rows[0].now);
-      
-      pool.on('error', (err) => {
-        console.error('Unexpected error on idle client', err);
-        pool = null; // Reset pool on error
-      });
-
-      pool.on('connect', (client) => {
-        client.query('SET statement_timeout = 20000'); // 20 seconds
-      });
     } catch (error) {
       console.error('Error initializing pool:', error);
       pool = null;
