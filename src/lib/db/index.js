@@ -1,29 +1,26 @@
 import { Pool } from 'pg';
 import bcrypt from 'bcrypt';
 
-// Force SSL mode to be disabled for all pg connections
-// process.env.PGSSLMODE = 'disable'; // Removed this line
-
 let pool;
 
 const createPool = () => {
   const connectionString = process.env.POSTGRES_URL;
   
   const poolConfig = {
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-    statement_timeout: 10000, // 10 seconds
-    query_timeout: 10000,     // 10 seconds
-    keepAlive: true,         // Enable keep-alive
-    keepAliveInitialDelayMillis: 10000,
-    ssl: {
-      rejectUnauthorized: false // Allow self-signed certificates while maintaining SSL
-    }
+    max: 5, // Reduced from 20
+    idleTimeoutMillis: 0, // Disable idle timeout
+    connectionTimeoutMillis: 10000, // Increased to 10 seconds
+    statement_timeout: 20000, // Increased to 20 seconds
+    query_timeout: 20000,    // Increased to 20 seconds
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 0,
+    ssl: process.env.NODE_ENV === 'production' ? {
+      rejectUnauthorized: false,
+      checkServerIdentity: () => undefined // Skip hostname checks
+    } : false
   };
 
   if (connectionString) {
-    // Keep the original connection string with sslmode=require
     return new Pool({
       ...poolConfig,
       connectionString,
@@ -45,8 +42,14 @@ const initializePool = async () => {
     try {
       pool = createPool();
       
-      // Test the connection
-      const client = await pool.connect();
+      // Test the connection with a longer timeout
+      const client = await Promise.race([
+        pool.connect(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Connection timeout')), 10000)
+        )
+      ]);
+
       const result = await client.query('SELECT NOW()');
       client.release();
       
@@ -58,7 +61,7 @@ const initializePool = async () => {
       });
 
       pool.on('connect', (client) => {
-        client.query('SET statement_timeout = 10000'); // 10 seconds
+        client.query('SET statement_timeout = 20000'); // 20 seconds
       });
     } catch (error) {
       console.error('Error initializing pool:', error);
@@ -83,7 +86,15 @@ export const db = {
         if (!pool) {
           await initializePool();
         }
-        client = await pool.connect();
+
+        // Get client with timeout
+        client = await Promise.race([
+          pool.connect(),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Connection timeout')), 10000)
+          )
+        ]);
+
         const result = await client.query(text, params);
         client.release();
         return result;
@@ -99,14 +110,21 @@ export const db = {
           }
         }
 
-        // Reset pool if we get a connection error
-        if (error.code === 'ECONNREFUSED' || error.code === '57P01') {
+        // Reset pool on specific errors
+        if (
+          error.code === 'ECONNREFUSED' || 
+          error.code === '57P01' ||
+          error.message.includes('timeout') ||
+          error.message.includes('certificate')
+        ) {
           pool = null;
         }
 
         // Wait before retrying
         if (i < retries - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+          await new Promise(resolve => 
+            setTimeout(resolve, Math.min(1000 * Math.pow(2, i), 10000))
+          );
         }
       }
     }
