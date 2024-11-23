@@ -164,14 +164,7 @@ export default function MedicalReportGenerator() {
       }
 
       setReport(data.report);
-      
-      if (data.savedReport?.id) {
-        const newUrl = new URL(window.location);
-        newUrl.searchParams.set('id', data.savedReport.id);
-        window.history.pushState({}, '', newUrl);
-        setSuccessMessage('Report generated and saved successfully!');
-        setSaveSuccess(true);
-      }
+      // Don't automatically save or update URL
     } catch (error) {
       console.error('Error generating report:', error);
       setError(error.message || 'Failed to generate report');
@@ -191,7 +184,7 @@ export default function MedicalReportGenerator() {
     setSaveSuccess(false);
 
     try {
-      const url = reportId ? `/api/reports/edit/${reportId}` : '/api/reports/save';
+      const url = reportId ? `/api/reports/${reportId}` : '/api/reports/save';
       const response = await fetch(url, {
         method: reportId ? 'PUT' : 'POST',
         headers: {
@@ -199,7 +192,7 @@ export default function MedicalReportGenerator() {
         },
         body: JSON.stringify({
           findings: findings,
-          report: report,
+          report: report, // Changed from content to report to match the API expectation
           specialty: specialty || 'General',
           promptId: selectedPrompt?.id === 'default' ? null : selectedPrompt?.id
         }),
@@ -218,10 +211,12 @@ export default function MedicalReportGenerator() {
         window.history.pushState({}, '', newUrl);
       }
 
-      // Show success message
       setSuccessMessage('Report saved successfully!');
-      setTimeout(() => setSuccessMessage(''), 3000);
-
+      setSaveSuccess(true);
+      setTimeout(() => {
+        setSuccessMessage('');
+        setSaveSuccess(false);
+      }, 3000);
     } catch (error) {
       console.error('Error:', error);
       setError(error.message || 'Failed to save report');

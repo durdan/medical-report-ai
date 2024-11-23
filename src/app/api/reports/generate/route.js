@@ -71,29 +71,14 @@ export async function POST(request) {
     // Generate report using AI
     const generatedReport = await generateReportWithAI(findings, prompt, specialty);
     const title = `${specialty} Report - ${new Date().toLocaleDateString()}`;
-
-    // Create the report in the database
-    const report = await createReport({
-      title,
-      findings,
-      content: generatedReport,
-      specialty,
-      promptId,
-      userId: session.user.id
-    });
     
-    // Format the response
+    // Return the generated report without saving
     return NextResponse.json({
       report: generatedReport,
-      savedReport: {
-        id: report.id,
-        title: report.title,
-        content: report.content,
-        findings: report.findings,
-        specialty: report.specialty,
-        createdAt: report.created_at,
-        updatedAt: report.updated_at
-      }
+      title,
+      findings,
+      specialty,
+      promptId
     });
   } catch (error) {
     console.error('Error generating report:', error);

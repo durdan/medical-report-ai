@@ -60,3 +60,68 @@ export async function GET(request, { params }) {
     );
   }
 }
+
+export async function PUT(request, { params }) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { id } = params;
+    const { findings, report: content, specialty, promptId } = await request.json();
+
+    // Validate required fields
+    if (!findings) {
+      return NextResponse.json({ error: 'Findings are required' }, { status: 400 });
+    }
+    if (!content) {
+      return NextResponse.json({ error: 'Report content is required' }, { status: 400 });
+    }
+    if (!specialty) {
+      return NextResponse.json({ error: 'Specialty is required' }, { status: 400 });
+    }
+
+    // Generate title
+    const title = `${specialty} Report - ${new Date().toLocaleDateString()}`;
+
+    // Update the report using Supabase
+    const { data: updatedReport, error } = await supabaseAdmin
+      .from('reports')
+      .update({
+        title,
+        findings,
+        content,
+        specialty,
+        prompt_id: promptId || null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .eq('user_id', session.user.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating report:', error);
+      return NextResponse.json(
+        { error: 'Failed to update report: ' + error.message },
+        { status: 500 }
+      );
+    }
+
+    if (!updatedReport) {
+      return NextResponse.json(
+        { error: 'Report not found or unauthorized' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ report: updatedReport });
+  } catch (error) {
+    console.error('Error updating report:', error);
+    return NextResponse.json(
+      { error: 'Failed to update report: ' + error.message },
+      { status: 500 }
+    );
+  }
+}
