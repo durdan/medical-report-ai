@@ -12,7 +12,6 @@ export async function getUserByEmail(email) {
     
     if (error) {
       console.log('Error looking up user:', error);
-      // Handle the case where no user is found
       if (error.code === 'PGRST116') {
         return null;
       }
@@ -26,21 +25,18 @@ export async function getUserByEmail(email) {
   }
 }
 
-export async function getUserById(id) {
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', id)
-    .single();
-  
-  if (error) {
-    // Handle the case where no user is found
-    if (error.code === 'PGRST116') {
-      return null;
+export async function validatePassword(user, password) {
+  try {
+    console.log('Validating password for user:', user.email);
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      console.log('Invalid password for user:', user.email);
     }
-    throw error;
+    return valid;
+  } catch (error) {
+    console.error('Error validating password:', error);
+    return false;
   }
-  return data;
 }
 
 export async function createUser({ name, email, password, role = 'USER' }) {
@@ -79,7 +75,6 @@ export async function ensureAdminUsers() {
   try {
     console.log('Checking for admin users...');
     
-    // Check if admin users exist
     const admins = [
       {
         email: 'admin@medical-ai.com',
