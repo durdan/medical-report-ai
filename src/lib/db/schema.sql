@@ -106,7 +106,7 @@ VALUES (
 -- Insert system prompts
 INSERT INTO prompts (id, title, content, specialty, is_system, user_id)
 VALUES (
-  'default-general'::uuid,
+  '550e8400-e29b-41d4-a716-446655440002'::uuid,
   'General Medical Report',
   'You are a professional medical report generator. Your task is to generate a clear, concise, and accurate medical report based on the provided findings. Please follow these guidelines:
 
@@ -122,7 +122,7 @@ Please generate a comprehensive medical report based on the provided findings.',
   '550e8400-e29b-41d4-a716-446655440000'::uuid
 ),
 (
-  'default-radiology'::uuid,
+  '550e8400-e29b-41d4-a716-446655440003'::uuid,
   'Radiology Report',
   'You are a specialized radiologist. Your task is to generate a detailed radiology report based on the provided imaging findings. Please follow these guidelines:
 

@@ -8,7 +8,13 @@ export async function getUserByEmail(email) {
     .eq('email', email)
     .single();
   
-  if (error) throw error;
+  if (error) {
+    // Handle the case where no user is found
+    if (error.code === 'PGRST116') {
+      return null;
+    }
+    throw error;
+  }
   return data;
 }
 
@@ -19,7 +25,13 @@ export async function getUserById(id) {
     .eq('id', id)
     .single();
   
-  if (error) throw error;
+  if (error) {
+    // Handle the case where no user is found
+    if (error.code === 'PGRST116') {
+      return null;
+    }
+    throw error;
+  }
   return data;
 }
 
@@ -37,6 +49,11 @@ export async function createUser({ name, email, password, role = 'USER' }) {
     .select()
     .single();
   
-  if (error) throw error;
+  if (error) {
+    if (error.code === '23505') { // Unique violation
+      throw new Error('Email already exists');
+    }
+    throw error;
+  }
   return data;
 }
