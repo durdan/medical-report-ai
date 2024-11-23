@@ -22,6 +22,7 @@ export default function MedicalReportGenerator() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [isManualPromptSelection, setIsManualPromptSelection] = useState(false);
 
   // Load existing report if editing
   useEffect(() => {
@@ -35,17 +36,16 @@ export default function MedicalReportGenerator() {
   }, []);
 
   useEffect(() => {
-    if (prompts.length > 0) {
-      // Find a default prompt for the current specialty
+    if (prompts.length > 0 && !isManualPromptSelection) {
+      // Only auto-select default prompt if user hasn't manually chosen one
       const defaultPrompt = prompts.find(p => p.isDefault && p.specialty === specialty);
       if (defaultPrompt) {
         setSelectedPrompt(defaultPrompt);
       } else {
-        // If no default prompt for specialty, keep using the default state
         setSelectedPrompt({ id: 'default', name: 'Default Prompt' });
       }
     }
-  }, [specialty, prompts]);
+  }, [specialty, prompts, isManualPromptSelection]);
 
   useEffect(() => {
     if (prompts.length > 0 && selectedPrompt.id && selectedPrompt.id !== 'default') {
@@ -269,6 +269,11 @@ export default function MedicalReportGenerator() {
     }
   };
 
+  const handlePromptChange = (prompt) => {
+    setSelectedPrompt(prompt);
+    setIsManualPromptSelection(true); // Mark that user has manually selected a prompt
+  };
+
   const resetForm = () => {
     setFindings('');
     setReport('');
@@ -339,8 +344,11 @@ export default function MedicalReportGenerator() {
                   <div className="flex items-center space-x-4">
                     <select
                       value={selectedPrompt?.id || 'default'}
-                      onChange={(e) => setSelectedPrompt({ id: e.target.value })}
-                      className="flex-grow rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                      onChange={(e) => {
+                        const selected = prompts.find(p => p.id === e.target.value) || { id: 'default', name: 'Default Prompt' };
+                        handlePromptChange(selected);
+                      }}
+                      className="w-full p-2 border rounded"
                     >
                       <option value="default">Default Prompt</option>
                       {prompts && prompts.length > 0 ? (
