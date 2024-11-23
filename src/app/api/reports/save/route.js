@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { db } from '@/lib/db';
-import crypto from 'crypto';
+import { supabaseAdmin } from '@/lib/db';
 
 export async function POST(request) {
   try {
@@ -11,9 +10,9 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { findings, report, specialty, promptId } = await request.json();
+    const { findings, report: content, specialty, promptId } = await request.json();
     
-    if (!findings || !report || !specialty) {
+    if (!findings || !content || !specialty) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
@@ -21,41 +20,39 @@ export async function POST(request) {
     }
 
     const title = `${specialty} Report - ${new Date().toLocaleDateString()}`;
-    const id = crypto.randomUUID();
 
-    // Get user ID
-    const userResult = await db.query(
-      'SELECT id FROM users WHERE email = $1',
-      [session.user.email]
-    );
+    // Save report using Supabase
+    const { data: savedReport, error } = await supabaseAdmin
+      .from('reports')
+      .insert([
+        {
+          title,
+          findings,
+          content,
+          specialty,
+          prompt_id: promptId || null,
+          user_id: session.user.id
+        }
+      ])
+      .select()
+      .single();
 
-    if (!userResult.rows[0]) {
-      throw new Error('User not found in database');
+    if (error) {
+      console.error('Error saving report:', error);
+      throw error;
     }
 
-    const userId = userResult.rows[0].id;
-
-    // Save report
-    const reportResult = await db.query(
-      `INSERT INTO reports (
-        id, title, findings, report, specialty,
-        prompt_id, user_id, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      RETURNING *`,
-      [
-        id,
-        title,
-        findings,
-        report,
-        specialty,
-        promptId,
-        userId
-      ]
-    );
-
-    return NextResponse.json({ 
-      success: true, 
-      report: reportResult.rows[0]
+    return NextResponse.json({
+      report: {
+        id: savedReport.id,
+        title: savedReport.title,
+        content: savedReport.content,
+        findings: savedReport.findings,
+        specialty: savedReport.specialty,
+        createdAt: savedReport.created_at,
+        updatedAt: savedReport.updated_at,
+        promptId: savedReport.prompt_id
+      }
     });
   } catch (error) {
     console.error('Error saving report:', error);

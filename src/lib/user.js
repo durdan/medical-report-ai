@@ -1,17 +1,30 @@
 import bcrypt from 'bcryptjs';
-import supabase from './db';
+import { createClient } from '@supabase/supabase-js';
+
+// Create a Supabase admin client for user management
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false
+    }
+  }
+);
 
 export async function getUserByEmail(email) {
   try {
     console.log('Looking up user with email:', email);
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('users')
       .select('*')
       .eq('email', email)
       .single();
     
     if (error) {
-      console.log('Error looking up user:', error);
+      console.error('Error looking up user:', error);
       if (error.code === 'PGRST116') {
         return null;
       }
@@ -44,7 +57,7 @@ export async function createUser({ name, email, password, role = 'USER' }) {
     console.log('Creating user with email:', email);
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('users')
       .insert([{ 
         name, 

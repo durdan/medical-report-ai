@@ -10,7 +10,7 @@ export default function MedicalReportGenerator() {
   const reportId = searchParams.get('id');
   
   const [prompts, setPrompts] = useState([]);
-  const [selectedPrompt, setSelectedPrompt] = useState({ id: 'default' });
+  const [selectedPrompt, setSelectedPrompt] = useState({ id: 'default', name: 'Default Prompt' });
   const [selectedPromptData, setSelectedPromptData] = useState(null);
   const [findings, setFindings] = useState('');
   const [report, setReport] = useState('');
@@ -41,17 +41,19 @@ export default function MedicalReportGenerator() {
       if (defaultPrompt) {
         setSelectedPrompt(defaultPrompt);
       } else {
-        // If no default prompt for specialty, use the first prompt or create a default state
-        setSelectedPrompt(prompts[0] || { id: 'default', name: 'Default Prompt' });
+        // If no default prompt for specialty, keep using the default state
+        setSelectedPrompt({ id: 'default', name: 'Default Prompt' });
       }
     }
   }, [specialty, prompts]);
 
   useEffect(() => {
-    if (prompts.length > 0 && selectedPrompt.id) {
+    if (prompts.length > 0 && selectedPrompt.id && selectedPrompt.id !== 'default') {
       const promptData = prompts.find(p => p.id === selectedPrompt.id);
       console.log('Selected prompt data:', promptData);
       setSelectedPromptData(promptData);
+    } else {
+      setSelectedPromptData(null);
     }
   }, [selectedPrompt, prompts]);
 
@@ -142,16 +144,23 @@ export default function MedicalReportGenerator() {
     setError('');
     
     try {
+      // Prepare request body
+      const requestBody = {
+        content: findings,
+        specialty
+      };
+
+      // Only include promptId if a valid prompt is selected
+      if (selectedPrompt?.id && selectedPrompt.id !== 'default') {
+        requestBody.promptId = selectedPrompt.id;
+      }
+
       const response = await fetch('/api/reports/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          findings,
-          specialty,
-          promptId: selectedPrompt?.id === 'default' ? null : selectedPrompt?.id
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       const data = await response.json();
@@ -160,14 +169,15 @@ export default function MedicalReportGenerator() {
         throw new Error(data.error || 'Failed to generate report');
       }
 
-      setReport(data.report);
-      // Store the promptId from the response for saving
-      setSelectedPrompt(prev => ({
-        ...prev,
-        id: data.promptId || 'default'
-      }));
-      setOriginalFindings(findings);
+      // Set the report content from the report object
+      if (data.report && data.report.content) {
+        setReport(data.report.content);
+      } else {
+        console.error('Invalid report format:', data);
+        throw new Error('Invalid report format received from server');
+      }
       
+      setOriginalFindings(findings);
     } catch (error) {
       console.error('Error:', error);
       setError(error.message);
@@ -204,6 +214,13 @@ export default function MedicalReportGenerator() {
       
       if (!response.ok) {
         throw new Error(data.error || 'Failed to save report');
+      }
+
+      // Update report ID if this is a new report
+      if (!reportId && data.report?.id) {
+        const newUrl = new URL(window.location);
+        newUrl.searchParams.set('id', data.report.id);
+        window.history.pushState({}, '', newUrl);
       }
 
       // Show success message

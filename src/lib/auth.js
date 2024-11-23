@@ -1,8 +1,13 @@
 import CredentialsProvider from 'next-auth/providers/credentials';
-import { getUserByEmail, validatePassword } from './user';
-import { db } from './db';
+import { supabaseAdmin } from '@/lib/db';
+import bcrypt from 'bcryptjs';
 
 export const authOptions = {
+  debug: true,
+  session: {
+    strategy: 'jwt',
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+  },
   providers: [
     CredentialsProvider({
       name: 'Credentials',
@@ -17,18 +22,39 @@ export const authOptions = {
             return null;
           }
 
-          const user = await getUserByEmail(credentials.email);
+          console.log('Attempting login for:', credentials.email);
+
+          // Query user with admin client
+          const { data: user, error: userError } = await supabaseAdmin
+            .from('users')
+            .select('id, email, password, name, role')
+            .eq('email', credentials.email)
+            .single();
+
+          if (userError) {
+            console.error('Error fetching user:', userError);
+            return null;
+          }
+
           if (!user) {
             console.log('No user found with email:', credentials.email);
             return null;
           }
 
-          const isValid = await validatePassword(user, credentials.password);
+          console.log('Found user:', user.email, 'with ID:', user.id);
+
+          // Test the password verification
+          const isValid = await bcrypt.compare(credentials.password, user.password);
+          console.log('Password verification result:', isValid);
+
           if (!isValid) {
             console.log('Invalid password for user:', credentials.email);
             return null;
           }
 
+          console.log('Login successful for:', credentials.email);
+
+          // Return user data without password
           return {
             id: user.id,
             email: user.email,
@@ -44,13 +70,21 @@ export const authOptions = {
   ],
   callbacks: {
     async jwt({ token, user }) {
+      // Initial sign in
       if (user) {
+        token.id = user.id;
+        token.email = user.email;
+        token.name = user.name;
         token.role = user.role;
       }
       return token;
     },
     async session({ session, token }) {
+      // Send properties to the client
       if (token) {
+        session.user.id = token.id;
+        session.user.name = token.name;
+        session.user.email = token.email;
         session.user.role = token.role;
       }
       return session;
@@ -60,8 +94,5 @@ export const authOptions = {
     signIn: '/auth/signin',
     error: '/auth/error',
   },
-  session: {
-    strategy: 'jwt',
-  },
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: process.env.NEXTAUTH_SECRET
 };

@@ -1,46 +1,48 @@
 import { NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/lib/db';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { db } from '@/lib/db';
 
 export async function GET() {
   try {
+    // Get the authenticated session
     const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    if (!session?.user?.id) {
+      console.log('No user ID in session:', session?.user);
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Get user ID
-    const userResult = await db.query(
-      'SELECT id FROM users WHERE email = $1',
-      [session.user.email]
-    );
+    console.log('Fetching reports for user:', session.user.email, 'with ID:', session.user.id);
 
-    if (!userResult.rows[0]) {
-      throw new Error('User not found in database');
+    // Query reports using admin client with correct column names
+    const { data: reports, error } = await supabaseAdmin
+      .from('reports')
+      .select(`
+        id,
+        content,
+        created_at,
+        updated_at,
+        user_id,
+        prompt:prompts(
+          id,
+          title,
+          content,
+          category,
+          is_active
+        )
+      `)
+      .eq('user_id', session.user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching reports:', error);
+      return NextResponse.json({ error: 'Failed to fetch reports' }, { status: 500 });
     }
 
-    const userId = userResult.rows[0].id;
-
-    // Get all reports for the user
-    const reportsResult = await db.query(
-      `SELECT r.*, p.title as prompt_title, p.specialty as prompt_specialty 
-       FROM reports r 
-       LEFT JOIN prompts p ON r.prompt_id = p.id 
-       WHERE r.user_id = $1 
-       ORDER BY r.created_at DESC`,
-      [userId]
-    );
-
-    return NextResponse.json({ 
-      success: true,
-      reports: reportsResult.rows 
-    });
+    console.log('Successfully fetched reports:', reports?.length || 0);
+    return NextResponse.json({ reports });
   } catch (error) {
     console.error('Error listing reports:', error);
-    return NextResponse.json(
-      { error: 'Failed to list reports: ' + error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
