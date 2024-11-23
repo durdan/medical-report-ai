@@ -42,11 +42,7 @@ export default function Dashboard() {
         throw new Error(data.error || 'Error fetching reports');
       }
 
-      if (data.success && Array.isArray(data.reports)) {
-        setReports(data.reports);
-      } else {
-        setReports([]);
-      }
+      setReports(data.reports || []);
     } catch (error) {
       console.error('Error fetching reports:', error);
       setError(error.message);
@@ -148,80 +144,62 @@ ${report.report}
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="bg-white rounded-lg shadow">
-          {/* Header */}
-          <div className="px-6 py-4 border-b border-gray-200">
-            <div className="flex justify-between items-center">
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-                <p className="text-gray-600">Welcome, {session.user.email}</p>
-              </div>
-              <button
-                onClick={handleNewReport}
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-              >
-                New Report
-              </button>
-            </div>
-          </div>
-
-          {/* Reports */}
-          <div className="mt-6 px-6">
-            <h3 className="text-lg font-semibold mb-4">Your Reports</h3>
-            {loading ? (
-              <p className="text-gray-600">Loading...</p>
-            ) : error ? (
-              <p className="text-red-600">{error}</p>
-            ) : reports.length === 0 ? (
-              <p className="text-gray-600">No reports found. Create your first report!</p>
-            ) : (
-              <div className="space-y-4">
-                {reports.map((report) => (
-                  <div key={report.id} className="border rounded-lg p-4">
-                    <h4 className="text-lg font-medium">{report.title}</h4>
-                    <p className="text-gray-600 mt-2">Specialty: {report.specialty}</p>
-                    <p className="text-gray-600">Findings: {report.findings}</p>
-                    <div className="mt-2 text-sm text-gray-500">
-                      Created: {new Date(report.created_at).toLocaleString()}
-                    </div>
-                    <div className="mt-2 space-x-4">
-                      <button
-                        onClick={() => router.push(`/report-generator?id=${report.id}`)}
-                        className="text-blue-600 hover:text-blue-900"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => copyToClipboard(report)}
-                        className="text-green-600 hover:text-green-900"
-                      >
-                        Copy
-                      </button>
-                      <button
-                        onClick={() => exportToPDF(report)}
-                        className="text-purple-600 hover:text-purple-900"
-                      >
-                        Export PDF
-                      </button>
-                      <button
-                        onClick={() => handleDeleteReport(report.id)}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                    {copySuccess && (
-                      <div className="mt-2 text-sm text-green-600">{copySuccess}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-3xl font-bold">Medical Reports</h1>
+        <Link 
+          href="/report-generator" 
+          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+        >
+          Generate New Report
+        </Link>
       </div>
+
+      {loading && (
+        <div className="text-center py-4">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-2">Loading reports...</p>
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && reports.length === 0 && (
+        <div className="text-center py-8">
+          <p className="text-gray-600">No reports found. Generate your first report!</p>
+        </div>
+      )}
+
+      {!loading && !error && reports.length > 0 && (
+        <div className="grid gap-6">
+          {reports.map((report) => (
+            <div 
+              key={report.id} 
+              className="bg-white p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow"
+            >
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-xl font-semibold mb-2">{report.title || 'Untitled Report'}</h2>
+                  <p className="text-gray-600 text-sm">
+                    {new Date(report.created_at).toLocaleDateString()} - {report.specialty || 'General'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => router.push(`/report/${report.id}`)}
+                  className="bg-blue-100 text-blue-600 px-3 py-1 rounded hover:bg-blue-200"
+                >
+                  View
+                </button>
+              </div>
+              <p className="text-gray-700 line-clamp-3">{report.findings}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -19,7 +19,10 @@ export async function GET() {
       .from('reports')
       .select(`
         id,
+        title,
+        findings,
         content,
+        specialty,
         created_at,
         updated_at,
         user_id,
