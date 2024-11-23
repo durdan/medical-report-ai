@@ -143,6 +143,7 @@ export default function MedicalReportGenerator() {
     setLoading(true);
     setError('');
     setSaveSuccess(false);
+    setReport(''); // Clear existing report
 
     try {
       const response = await fetch('/api/reports/generate', {
@@ -157,14 +158,25 @@ export default function MedicalReportGenerator() {
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to generate report');
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to generate report');
       }
 
-      setReport(data.report);
-      // Don't automatically save or update URL
+      // Handle streaming response
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullReport = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const text = decoder.decode(value);
+        fullReport += text;
+        setReport(fullReport); // Update UI incrementally
+      }
+
     } catch (error) {
       console.error('Error generating report:', error);
       setError(error.message || 'Failed to generate report');
