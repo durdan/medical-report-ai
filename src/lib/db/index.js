@@ -4,24 +4,27 @@ import bcrypt from 'bcrypt';
 let pool;
 
 const createPool = () => {
-  const config = process.env.POSTGRES_URL
-    ? {
-        connectionString: process.env.POSTGRES_URL,
-        ssl: false, // Disable SSL verification
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
-      }
-    : {
-        user: process.env.POSTGRES_USER,
-        host: process.env.POSTGRES_HOST,
-        database: process.env.POSTGRES_DATABASE,
-        password: process.env.POSTGRES_PASSWORD,
-        port: 5432,
-        ssl: false,
-      };
+  const connectionString = process.env.POSTGRES_URL;
+  
+  if (connectionString) {
+    return new Pool({
+      connectionString,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+      ssl: false // Explicitly disable SSL
+    });
+  }
 
-  return new Pool(config);
+  // Local development configuration
+  return new Pool({
+    user: process.env.POSTGRES_USER,
+    host: process.env.POSTGRES_HOST,
+    database: process.env.POSTGRES_DATABASE,
+    password: process.env.POSTGRES_PASSWORD,
+    port: 5432,
+    ssl: false // Explicitly disable SSL
+  });
 };
 
 const initializePool = async () => {
@@ -37,7 +40,6 @@ const initializePool = async () => {
     
     pool.on('error', (err) => {
       console.error('Unexpected error on idle client', err);
-      // Don't exit process in production, just log the error
       if (process.env.NODE_ENV !== 'production') {
         process.exit(-1);
       }
@@ -47,7 +49,6 @@ const initializePool = async () => {
   } catch (error) {
     console.error('Error initializing pool:', error);
     
-    // In production, retry connection
     if (process.env.NODE_ENV === 'production') {
       console.log('Retrying connection in 5 seconds...');
       await new Promise(resolve => setTimeout(resolve, 5000));
