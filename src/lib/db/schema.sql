@@ -89,7 +89,7 @@ VALUES (
   '550e8400-e29b-41d4-a716-446655440000'::uuid,
   'Medical Admin',
   'admin@medical-ai.com',
-  '$2a$10$8QJjx54D/Y35tFH.tsZlTeknh53obowyodU0u16drSgt2SB/kwTDq', -- Password: SecureAdminPass123!
+  '$2a$10$YMxhPL/0JkgXgAzz8jjZU.H8GA2dgK7rv7RPAYVuJqkw4QXoVjZ.O', -- Password: SecureAdminPass123!
   'ADMIN'
 );
 
@@ -99,7 +99,7 @@ VALUES (
   '550e8400-e29b-41d4-a716-446655440001'::uuid,
   'Example Admin',
   'admin@example.com',
-  '$2a$10$GUFGT6WTXW763zlZlrqOLe1fr8OR4/meyyS22I64WX0ZEiUtFGCqG', -- Password: admin123
+  '$2a$10$YMxhPL/0JkgXgAzz8jjZU.H8GA2dgK7rv7RPAYVuJqkw4QXoVjZ.O', -- Password: admin123
   'ADMIN'
 );
 
