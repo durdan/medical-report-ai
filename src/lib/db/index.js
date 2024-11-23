@@ -4,17 +4,19 @@ import bcrypt from 'bcrypt';
 let pool;
 
 const createPool = () => {
-  const connectionString = process.env.POSTGRES_URL;
+  let connectionString = process.env.POSTGRES_URL;
   
+  // For production, ensure we have the right SSL mode
+  if (process.env.NODE_ENV === 'production') {
+    // Remove any existing SSL mode
+    connectionString = connectionString.replace(/\?sslmode=\w+/, '');
+    // Add our SSL mode
+    connectionString += '?sslmode=no-verify';
+  }
+
   const config = {
     connectionString,
-    max: 5,
-    // Only add SSL configuration for production (Vercel)
-    ...(process.env.NODE_ENV === 'production' && {
-      ssl: {
-        rejectUnauthorized: false
-      }
-    })
+    max: 5
   };
 
   return new Pool(config);
@@ -27,9 +29,15 @@ const initializePool = async () => {
       const client = await pool.connect();
       const result = await client.query('SELECT NOW()');
       client.release();
-      console.log('Database connection successful:', result.rows[0].now);
+      console.log('Database connected:', {
+        env: process.env.NODE_ENV,
+        timestamp: result.rows[0].now
+      });
     } catch (error) {
-      console.error('Error initializing pool:', error);
+      console.error('Database connection error:', {
+        message: error.message,
+        code: error.code
+      });
       pool = null;
       throw error;
     }
@@ -38,20 +46,24 @@ const initializePool = async () => {
 };
 
 // Initialize pool
-initializePool().catch(console.error);
+initializePool().catch(error => {
+  console.error('Failed to initialize pool:', {
+    message: error.message,
+    code: error.code
+  });
+});
 
 // Export database interface with connection management and retries
 export const db = {
   query: async (text, params, retries = 3) => {
+    if (!pool) {
+      await initializePool();
+    }
     let client;
     let lastError;
 
     for (let i = 0; i < retries; i++) {
       try {
-        if (!pool) {
-          await initializePool();
-        }
-
         // Get client with timeout
         client = await Promise.race([
           pool.connect(),
@@ -64,7 +76,11 @@ export const db = {
         client.release();
         return result;
       } catch (error) {
-        console.error(`Database query error (attempt ${i + 1}/${retries}):`, error);
+        console.error('Query error:', {
+          message: error.message,
+          code: error.code,
+          query: text
+        });
         lastError = error;
         
         if (client) {
