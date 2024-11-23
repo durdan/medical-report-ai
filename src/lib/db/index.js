@@ -1,36 +1,45 @@
 import { Pool } from 'pg';
 import bcrypt from 'bcrypt';
 
+// Force SSL mode to be disabled for all pg connections
+// process.env.PGSSLMODE = 'disable'; // Removed this line
+
 let pool;
 
 const createPool = () => {
   const connectionString = process.env.POSTGRES_URL;
   
+  const poolConfig = {
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+    statement_timeout: 10000, // 10 seconds
+    query_timeout: 10000,     // 10 seconds
+    keepAlive: true,         // Enable keep-alive
+    keepAliveInitialDelayMillis: 10000,
+    ssl: {
+      rejectUnauthorized: false // Allow self-signed certificates while maintaining SSL
+    }
+  };
+
   if (connectionString) {
-    // For production (Vercel)
+    // Keep the original connection string with sslmode=require
     return new Pool({
+      ...poolConfig,
       connectionString,
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
-      ssl: {
-        rejectUnauthorized: false // This is key for Vercel deployment
-      }
     });
   }
 
-  // For local development
   return new Pool({
+    ...poolConfig,
     user: process.env.POSTGRES_USER,
     host: process.env.POSTGRES_HOST,
     database: process.env.POSTGRES_DATABASE,
     password: process.env.POSTGRES_PASSWORD,
     port: 5432,
-    ssl: false
   });
 };
 
-// Create a single pool instance
 const initializePool = async () => {
   if (!pool) {
     try {
@@ -45,12 +54,15 @@ const initializePool = async () => {
       
       pool.on('error', (err) => {
         console.error('Unexpected error on idle client', err);
-        if (process.env.NODE_ENV !== 'production') {
-          process.exit(-1);
-        }
+        pool = null; // Reset pool on error
+      });
+
+      pool.on('connect', (client) => {
+        client.query('SET statement_timeout = 10000'); // 10 seconds
       });
     } catch (error) {
       console.error('Error initializing pool:', error);
+      pool = null;
       throw error;
     }
   }
@@ -73,10 +85,12 @@ export const db = {
         }
         client = await pool.connect();
         const result = await client.query(text, params);
+        client.release();
         return result;
       } catch (error) {
         console.error(`Database query error (attempt ${i + 1}/${retries}):`, error);
         lastError = error;
+        
         if (client) {
           try {
             client.release(true); // Release with error
@@ -84,6 +98,12 @@ export const db = {
             console.error('Error releasing client:', releaseError);
           }
         }
+
+        // Reset pool if we get a connection error
+        if (error.code === 'ECONNREFUSED' || error.code === '57P01') {
+          pool = null;
+        }
+
         // Wait before retrying
         if (i < retries - 1) {
           await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));

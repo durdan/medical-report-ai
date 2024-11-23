@@ -1,6 +1,7 @@
 import CredentialsProvider from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
 import { getUserByEmail } from './user';
+import { db } from './db';
 
 export const authOptions = {
   providers: [
@@ -38,6 +39,13 @@ export const authOptions = {
           };
         } catch (error) {
           console.error('Error in authorize:', error);
+          // Log more details about the error
+          if (error.code) {
+            console.error('Error code:', error.code);
+          }
+          if (error.message) {
+            console.error('Error message:', error.message);
+          }
           throw error;
         }
       }
@@ -63,6 +71,6 @@ export const authOptions = {
     signIn: '/auth/signin',
     error: '/auth/error'
   },
-  secret: process.env.NEXTAUTH_SECRET,
-  debug: process.env.NODE_ENV === 'development'
+  debug: process.env.NODE_ENV === 'development',
+  secret: process.env.NEXTAUTH_SECRET
 };
