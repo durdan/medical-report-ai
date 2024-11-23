@@ -1,135 +1,74 @@
-import { Pool } from 'pg';
+import { createClient } from '@supabase/supabase-js';
 import bcrypt from 'bcrypt';
 
-let pool;
+if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+  throw new Error('Missing environment variable: NEXT_PUBLIC_SUPABASE_URL');
+}
 
-const createPool = () => {
-  let connectionString = process.env.POSTGRES_URL;
-  
-  // For production, ensure we have the right SSL mode
-  if (process.env.NODE_ENV === 'production') {
-    // Remove any existing SSL mode
-    connectionString = connectionString.replace(/\?sslmode=\w+/, '');
-    // Add our SSL mode
-    connectionString += '?sslmode=no-verify';
-  }
+if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+  throw new Error('Missing environment variable: NEXT_PUBLIC_SUPABASE_ANON_KEY');
+}
 
-  const config = {
-    connectionString,
-    max: 5
-  };
+// Create a single supabase client for interacting with your database
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
 
-  return new Pool(config);
-};
-
-const initializePool = async () => {
-  if (!pool) {
+// Export database interface
+export const db = {
+  query: async (text, params) => {
     try {
-      pool = createPool();
-      const client = await pool.connect();
-      const result = await client.query('SELECT NOW()');
-      client.release();
-      console.log('Database connected:', {
-        env: process.env.NODE_ENV,
-        timestamp: result.rows[0].now
-      });
+      // Convert SQL query to Supabase query
+      // This is a basic example - you'll need to adapt this based on your actual queries
+      const { data, error } = await supabase
+        .from('your_table')
+        .select('*')
+        // Add any additional query parameters here
+        
+      if (error) throw error;
+      return { rows: data };
+      
     } catch (error) {
-      console.error('Database connection error:', {
+      console.error('Query error:', {
         message: error.message,
-        code: error.code
+        details: error.details,
+        hint: error.hint
       });
-      pool = null;
       throw error;
     }
-  }
-  return pool;
-};
-
-// Initialize pool
-initializePool().catch(error => {
-  console.error('Failed to initialize pool:', {
-    message: error.message,
-    code: error.code
-  });
-});
-
-// Export database interface with connection management and retries
-export const db = {
-  query: async (text, params, retries = 3) => {
-    if (!pool) {
-      await initializePool();
-    }
-    let client;
-    let lastError;
-
-    for (let i = 0; i < retries; i++) {
-      try {
-        // Get client with timeout
-        client = await Promise.race([
-          pool.connect(),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Connection timeout')), 10000)
-          )
-        ]);
-
-        const result = await client.query(text, params);
-        client.release();
-        return result;
-      } catch (error) {
-        console.error('Query error:', {
-          message: error.message,
-          code: error.code,
-          query: text
-        });
-        lastError = error;
-        
-        if (client) {
-          try {
-            client.release(true); // Release with error
-          } catch (releaseError) {
-            console.error('Error releasing client:', releaseError);
-          }
-        }
-
-        // Reset pool on specific errors
-        if (
-          error.code === 'ECONNREFUSED' || 
-          error.code === '57P01' ||
-          error.message.includes('timeout') ||
-          error.message.includes('certificate')
-        ) {
-          pool = null;
-        }
-
-        // Wait before retrying
-        if (i < retries - 1) {
-          await new Promise(resolve => 
-            setTimeout(resolve, Math.min(1000 * Math.pow(2, i), 10000))
-          );
-        }
-      }
-    }
-    throw lastError;
   }
 };
 
 export const createUser = async (email, password, name) => {
   const hashedPassword = await bcrypt.hash(password, 10);
-  const result = await db.query(
-    'INSERT INTO users (email, password, name, role) VALUES ($1, $2, $3, $4) RETURNING id, email, name, role',
-    [email, hashedPassword, name, 'USER']
-  );
-  return result.rows[0];
+  const { data, error } = await supabase
+    .from('users')
+    .insert([{ email, password: hashedPassword, name, role: 'USER' }])
+    .select('id, email, name, role');
+  
+  if (error) throw error;
+  return data[0];
 };
 
 export const getUserByEmail = async (email) => {
-  const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-  return result.rows[0];
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('email', email);
+  
+  if (error) throw error;
+  return data[0];
 };
 
 export const getUserById = async (id) => {
-  const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
-  return result.rows[0];
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', id);
+  
+  if (error) throw error;
+  return data[0];
 };
 
 export const verifyPassword = async (password, hashedPassword) => {
@@ -137,72 +76,109 @@ export const verifyPassword = async (password, hashedPassword) => {
 };
 
 export const createReport = async (userId, title, findings, report, specialty, promptId) => {
-  const result = await db.query(
-    'INSERT INTO reports (user_id, title, findings, report, specialty, prompt_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-    [userId, title, findings, report, specialty, promptId]
-  );
-  return result.rows[0];
+  const { data, error } = await supabase
+    .from('reports')
+    .insert([{ user_id: userId, title, findings, report, specialty, prompt_id: promptId }])
+    .select('*');
+  
+  if (error) throw error;
+  return data[0];
 };
 
 export const updateReport = async (reportId, userId, title, findings, report, specialty, promptId) => {
-  const result = await db.query(
-    'UPDATE reports SET title = $1, findings = $2, report = $3, specialty = $4, prompt_id = $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6 AND user_id = $7 RETURNING *',
-    [title, findings, report, specialty, promptId, reportId, userId]
-  );
-  return result.rows[0];
+  const { data, error } = await supabase
+    .from('reports')
+    .update([{ title, findings, report, specialty, prompt_id: promptId, updated_at: new Date().toISOString() }])
+    .eq('id', reportId)
+    .eq('user_id', userId)
+    .select('*');
+  
+  if (error) throw error;
+  return data[0];
 };
 
 export const deleteReport = async (reportId, userId) => {
-  const result = await db.query(
-    'DELETE FROM reports WHERE id = $1 AND user_id = $2 RETURNING *',
-    [reportId, userId]
-  );
-  return result.rows[0];
+  const { data, error } = await supabase
+    .from('reports')
+    .delete()
+    .eq('id', reportId)
+    .eq('user_id', userId)
+    .select('*');
+  
+  if (error) throw error;
+  return data[0];
 };
 
 export const getReportById = async (reportId, userId) => {
-  const result = await db.query(
-    'SELECT r.*, p.title as prompt_title, p.specialty as prompt_specialty FROM reports r LEFT JOIN prompts p ON r.prompt_id = p.id WHERE r.id = $1 AND r.user_id = $2',
-    [reportId, userId]
-  );
-  return result.rows[0];
+  const { data, error } = await supabase
+    .from('reports')
+    .select('*, prompts(title, specialty) as prompt_title, prompts(specialty) as prompt_specialty')
+    .eq('id', reportId)
+    .eq('user_id', userId);
+  
+  if (error) throw error;
+  return data[0];
 };
 
 export const listReports = async (userId) => {
-  const result = await db.query(
-    'SELECT r.*, p.title as prompt_title FROM reports r LEFT JOIN prompts p ON r.prompt_id = p.id WHERE r.user_id = $1 ORDER BY r.created_at DESC',
-    [userId]
-  );
-  return result.rows;
+  const { data, error } = await supabase
+    .from('reports')
+    .select('*, prompts(title) as prompt_title')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+  
+  if (error) throw error;
+  return data;
 };
 
 export const createPrompt = async (title, content, specialty) => {
-  const result = await db.query(
-    'INSERT INTO prompts (title, content, specialty) VALUES ($1, $2, $3) RETURNING *',
-    [title, content, specialty]
-  );
-  return result.rows[0];
+  const { data, error } = await supabase
+    .from('prompts')
+    .insert([{ title, content, specialty }])
+    .select('*');
+  
+  if (error) throw error;
+  return data[0];
 };
 
 export const updatePrompt = async (id, title, content, specialty) => {
-  const result = await db.query(
-    'UPDATE prompts SET title = $1, content = $2, specialty = $3 WHERE id = $4 RETURNING *',
-    [title, content, specialty, id]
-  );
-  return result.rows[0];
+  const { data, error } = await supabase
+    .from('prompts')
+    .update([{ title, content, specialty }])
+    .eq('id', id)
+    .select('*');
+  
+  if (error) throw error;
+  return data[0];
 };
 
 export const deletePrompt = async (id) => {
-  const result = await db.query('DELETE FROM prompts WHERE id = $1 RETURNING *', [id]);
-  return result.rows[0];
+  const { data, error } = await supabase
+    .from('prompts')
+    .delete()
+    .eq('id', id)
+    .select('*');
+  
+  if (error) throw error;
+  return data[0];
 };
 
 export const getPromptById = async (id) => {
-  const result = await db.query('SELECT * FROM prompts WHERE id = $1', [id]);
-  return result.rows[0];
+  const { data, error } = await supabase
+    .from('prompts')
+    .select('*')
+    .eq('id', id);
+  
+  if (error) throw error;
+  return data[0];
 };
 
 export const listPrompts = async () => {
-  const result = await db.query('SELECT * FROM prompts ORDER BY created_at DESC');
-  return result.rows;
+  const { data, error } = await supabase
+    .from('prompts')
+    .select('*')
+    .order('created_at', { ascending: false });
+  
+  if (error) throw error;
+  return data;
 };
