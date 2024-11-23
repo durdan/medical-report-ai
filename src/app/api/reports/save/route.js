@@ -10,15 +10,20 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { findings, report: content, specialty, promptId } = await request.json();
+    const { findings, report: content, specialty = 'General', promptId } = await request.json();
     
-    if (!findings || !content || !specialty) {
-      return NextResponse.json(
-        { error: 'Missing required fields' },
-        { status: 400 }
-      );
+    // Validate required fields
+    if (!findings) {
+      return NextResponse.json({ error: 'Findings are required' }, { status: 400 });
+    }
+    if (!content) {
+      return NextResponse.json({ error: 'Report content is required' }, { status: 400 });
+    }
+    if (!specialty) {
+      return NextResponse.json({ error: 'Specialty is required' }, { status: 400 });
     }
 
+    // Generate title
     const title = `${specialty} Report - ${new Date().toLocaleDateString()}`;
 
     // Save report using Supabase
@@ -39,7 +44,10 @@ export async function POST(request) {
 
     if (error) {
       console.error('Error saving report:', error);
-      throw error;
+      return NextResponse.json(
+        { error: 'Failed to save report: ' + error.message },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
@@ -55,9 +63,9 @@ export async function POST(request) {
       }
     });
   } catch (error) {
-    console.error('Error saving report:', error);
+    console.error('Error in save report endpoint:', error);
     return NextResponse.json(
-      { error: 'Failed to save report: ' + error.message },
+      { error: 'An error occurred while saving the report: ' + error.message },
       { status: 500 }
     );
   }

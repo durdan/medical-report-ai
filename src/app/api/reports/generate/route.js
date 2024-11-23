@@ -51,12 +51,11 @@ export async function POST(request) {
     }
 
     // Parse request body
-    const body = await request.json();
-    const { content: findings, promptId, specialty = 'General' } = body;
+    const { findings, promptId, specialty = 'General' } = await request.json();
 
     if (!findings) {
       return NextResponse.json(
-        { error: 'Missing required field: content' },
+        { error: 'Findings are required' },
         { status: 400 }
       );
     }
@@ -70,28 +69,30 @@ export async function POST(request) {
     }
 
     // Generate report using AI
-    const generatedContent = await generateReportWithAI(findings, prompt, specialty);
+    const generatedReport = await generateReportWithAI(findings, prompt, specialty);
+    const title = `${specialty} Report - ${new Date().toLocaleDateString()}`;
 
     // Create the report in the database
-    const reportData = {
-      content: generatedContent,
+    const report = await createReport({
+      title,
+      findings,
+      content: generatedReport,
+      specialty,
+      promptId,
       userId: session.user.id
-    };
-
-    if (promptId) {
-      reportData.promptId = promptId;
-    }
-
-    const report = await createReport(reportData);
+    });
     
     // Format the response
     return NextResponse.json({
-      report: {
+      report: generatedReport,
+      savedReport: {
         id: report.id,
+        title: report.title,
         content: report.content,
+        findings: report.findings,
+        specialty: report.specialty,
         createdAt: report.created_at,
-        updatedAt: report.updated_at,
-        promptId: report.prompt_id
+        updatedAt: report.updated_at
       }
     });
   } catch (error) {

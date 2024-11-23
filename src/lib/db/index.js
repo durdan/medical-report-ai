@@ -123,18 +123,21 @@ export async function getPromptById(id) {
   };
 }
 
-export async function createReport({ content, promptId, userId }) {
-  console.log('Creating report with:', { content, promptId, userId });
+export async function createReport({ title, findings, content, specialty, promptId, userId }) {
+  console.log('Creating report with:', { title, findings, content, specialty, promptId, userId });
+
+  if (!title || !findings || !content || !specialty || !userId) {
+    throw new Error('Missing required fields: title, findings, content, specialty, and userId are required');
+  }
 
   const reportData = {
+    title,
+    findings,
     content,
-    user_id: userId
+    specialty,
+    user_id: userId,
+    prompt_id: promptId || null
   };
-
-  // Only add prompt_id if it exists
-  if (promptId) {
-    reportData.prompt_id = promptId;
-  }
 
   const { data: report, error } = await supabaseAdmin
     .from('reports')

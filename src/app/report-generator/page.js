@@ -134,7 +134,7 @@ export default function MedicalReportGenerator() {
     }
   };
 
-  const handleGenerate = async () => {
+  const handleGenerateReport = async () => {
     if (!findings) {
       setError('Please enter medical findings');
       return;
@@ -142,51 +142,45 @@ export default function MedicalReportGenerator() {
 
     setLoading(true);
     setError('');
-    
+    setSaveSuccess(false);
+
     try {
-      // Prepare request body
-      const requestBody = {
-        content: findings,
-        specialty
-      };
-
-      // Only include promptId if a valid prompt is selected
-      if (selectedPrompt?.id && selectedPrompt.id !== 'default') {
-        requestBody.promptId = selectedPrompt.id;
-      }
-
       const response = await fetch('/api/reports/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({
+          findings: findings,
+          promptId: selectedPrompt?.id === 'default' ? null : selectedPrompt?.id,
+          specialty: specialty || 'General'
+        }),
       });
 
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.error || 'Failed to generate report');
       }
 
-      // Set the report content from the report object
-      if (data.report && data.report.content) {
-        setReport(data.report.content);
-      } else {
-        console.error('Invalid report format:', data);
-        throw new Error('Invalid report format received from server');
-      }
+      setReport(data.report);
       
-      setOriginalFindings(findings);
+      if (data.savedReport?.id) {
+        const newUrl = new URL(window.location);
+        newUrl.searchParams.set('id', data.savedReport.id);
+        window.history.pushState({}, '', newUrl);
+        setSuccessMessage('Report generated and saved successfully!');
+        setSaveSuccess(true);
+      }
     } catch (error) {
-      console.error('Error:', error);
-      setError(error.message);
+      console.error('Error generating report:', error);
+      setError(error.message || 'Failed to generate report');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSave = async () => {
+  const handleSaveReport = async () => {
     if (!report) {
       setError('Please generate a report first');
       return;
@@ -194,6 +188,7 @@ export default function MedicalReportGenerator() {
 
     setIsSaving(true);
     setError('');
+    setSaveSuccess(false);
 
     try {
       const url = reportId ? `/api/reports/edit/${reportId}` : '/api/reports/save';
@@ -203,15 +198,15 @@ export default function MedicalReportGenerator() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          findings,
-          report,
-          specialty,
+          findings: findings,
+          report: report,
+          specialty: specialty || 'General',
           promptId: selectedPrompt?.id === 'default' ? null : selectedPrompt?.id
         }),
       });
 
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.error || 'Failed to save report');
       }
@@ -229,7 +224,7 @@ export default function MedicalReportGenerator() {
 
     } catch (error) {
       console.error('Error:', error);
-      setError(error.message);
+      setError(error.message || 'Failed to save report');
     } finally {
       setIsSaving(false);
     }
@@ -415,7 +410,7 @@ export default function MedicalReportGenerator() {
                   />
                   <div className="mt-4">
                     <button
-                      onClick={handleGenerate}
+                      onClick={handleGenerateReport}
                       disabled={loading}
                       className="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center space-x-2"
                     >
@@ -461,7 +456,7 @@ export default function MedicalReportGenerator() {
                       )}
                     </button>
                     <button
-                      onClick={handleSave}
+                      onClick={handleSaveReport}
                       disabled={isSaving || !report}
                       className="bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center"
                     >
