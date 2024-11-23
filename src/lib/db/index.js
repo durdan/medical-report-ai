@@ -7,7 +7,7 @@ const createPool = () => {
   const config = process.env.POSTGRES_URL
     ? {
         connectionString: process.env.POSTGRES_URL,
-        ssl: { rejectUnauthorized: false },
+        ssl: false, // Disable SSL verification
         max: 20,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 2000,
