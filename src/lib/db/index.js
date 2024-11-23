@@ -7,77 +7,90 @@ const createPool = () => {
   const connectionString = process.env.POSTGRES_URL;
   
   if (connectionString) {
+    // For production (Vercel)
     return new Pool({
       connectionString,
       max: 20,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
-      ssl: false // Explicitly disable SSL
+      ssl: {
+        rejectUnauthorized: false // This is key for Vercel deployment
+      }
     });
   }
 
-  // Local development configuration
+  // For local development
   return new Pool({
     user: process.env.POSTGRES_USER,
     host: process.env.POSTGRES_HOST,
     database: process.env.POSTGRES_DATABASE,
     password: process.env.POSTGRES_PASSWORD,
     port: 5432,
-    ssl: false // Explicitly disable SSL
+    ssl: false
   });
 };
 
+// Create a single pool instance
 const initializePool = async () => {
-  try {
-    pool = createPool();
-    
-    // Test the connection
-    const client = await pool.connect();
-    await client.query('SELECT NOW()');
-    client.release();
-    
-    console.log('Database connection successful');
-    
-    pool.on('error', (err) => {
-      console.error('Unexpected error on idle client', err);
-      if (process.env.NODE_ENV !== 'production') {
-        process.exit(-1);
-      }
-    });
-
-    return pool;
-  } catch (error) {
-    console.error('Error initializing pool:', error);
-    
-    if (process.env.NODE_ENV === 'production') {
-      console.log('Retrying connection in 5 seconds...');
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      return initializePool();
+  if (!pool) {
+    try {
+      pool = createPool();
+      
+      // Test the connection
+      const client = await pool.connect();
+      const result = await client.query('SELECT NOW()');
+      client.release();
+      
+      console.log('Database connection successful:', result.rows[0].now);
+      
+      pool.on('error', (err) => {
+        console.error('Unexpected error on idle client', err);
+        if (process.env.NODE_ENV !== 'production') {
+          process.exit(-1);
+        }
+      });
+    } catch (error) {
+      console.error('Error initializing pool:', error);
+      throw error;
     }
-    
-    throw error;
   }
+  return pool;
 };
 
 // Initialize pool
 initializePool().catch(console.error);
 
-// Export database interface with connection management
+// Export database interface with connection management and retries
 export const db = {
-  query: async (text, params) => {
+  query: async (text, params, retries = 3) => {
     let client;
-    try {
-      client = await pool.connect();
-      const result = await client.query(text, params);
-      return result;
-    } catch (error) {
-      console.error('Database query error:', error);
-      throw error;
-    } finally {
-      if (client) {
-        client.release();
+    let lastError;
+
+    for (let i = 0; i < retries; i++) {
+      try {
+        if (!pool) {
+          await initializePool();
+        }
+        client = await pool.connect();
+        const result = await client.query(text, params);
+        return result;
+      } catch (error) {
+        console.error(`Database query error (attempt ${i + 1}/${retries}):`, error);
+        lastError = error;
+        if (client) {
+          try {
+            client.release(true); // Release with error
+          } catch (releaseError) {
+            console.error('Error releasing client:', releaseError);
+          }
+        }
+        // Wait before retrying
+        if (i < retries - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+        }
       }
     }
+    throw lastError;
   }
 };
 
