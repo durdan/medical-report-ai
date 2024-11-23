@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { db } from '@/lib/db';
+import { supabaseAdmin } from '@/lib/db';
 
 export async function GET(request, { params }) {
   try {
@@ -12,38 +12,46 @@ export async function GET(request, { params }) {
 
     const { id } = params;
 
-    // Get user ID
-    const userResult = await db.query(
-      'SELECT id FROM users WHERE email = $1',
-      [session.user.email]
-    );
+    // Get the report using Supabase
+    const { data: report, error } = await supabaseAdmin
+      .from('reports')
+      .select(`
+        id,
+        title,
+        findings,
+        content,
+        specialty,
+        created_at,
+        updated_at,
+        user_id,
+        prompt:prompts(
+          id,
+          title,
+          content,
+          category,
+          is_active
+        )
+      `)
+      .eq('id', id)
+      .eq('user_id', session.user.id)
+      .single();
 
-    if (!userResult.rows[0]) {
-      throw new Error('User not found in database');
+    if (error) {
+      console.error('Error fetching report:', error);
+      return NextResponse.json(
+        { error: 'Failed to fetch report: ' + error.message },
+        { status: 500 }
+      );
     }
 
-    const userId = userResult.rows[0].id;
-
-    // Get the report
-    const reportResult = await db.query(
-      `SELECT r.*, p.title as prompt_title, p.specialty as prompt_specialty 
-       FROM reports r 
-       LEFT JOIN prompts p ON r.prompt_id = p.id 
-       WHERE r.id = $1 AND r.user_id = $2`,
-      [id, userId]
-    );
-
-    if (!reportResult.rows[0]) {
+    if (!report) {
       return NextResponse.json(
         { error: 'Report not found' },
         { status: 404 }
       );
     }
 
-    return NextResponse.json({ 
-      success: true,
-      ...reportResult.rows[0]
-    });
+    return NextResponse.json({ report });
   } catch (error) {
     console.error('Error fetching report:', error);
     return NextResponse.json(
