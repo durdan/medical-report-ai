@@ -78,6 +78,8 @@ export default function MedicalReportGenerator() {
   const [showTranscriptionDialog, setShowTranscriptionDialog] = useState(false);
   const [whisperText, setWhisperText] = useState('');
   const [currentWebSpeechText, setCurrentWebSpeechText] = useState('');
+  const [micButtonState, setMicButtonState] = useState('idle'); // 'idle', 'recording', 'processing'
+  const [visualFeedback, setVisualFeedback] = useState('');
 
   // Refs for audio visualization
   const audioContextRef = useRef(null);
@@ -199,6 +201,8 @@ export default function MedicalReportGenerator() {
 
       recognition.onstart = async () => {
         setIsRecording(true);
+        setMicButtonState('recording');
+        setVisualFeedback('Recording...');
         const audio = await initializeAudio();
         if (audio) {
           setAudioContext(audio.audioContext);
@@ -207,6 +211,10 @@ export default function MedicalReportGenerator() {
       };
 
       recognition.onerror = (event) => {
+        setIsRecording(false);
+        setMicButtonState('idle');
+        setVisualFeedback(`Error: ${event.error}`);
+        setTimeout(() => setVisualFeedback(''), 3000);
         let errorMessage = 'Speech recognition error: ';
         
         switch (event.error) {
@@ -227,12 +235,13 @@ export default function MedicalReportGenerator() {
         }
         
         setError(errorMessage);
-        setIsRecording(false);
         setInterimTranscript('');
       };
 
       recognition.onend = () => {
         setIsRecording(false);
+        setMicButtonState('idle');
+        setVisualFeedback('');
         setInterimTranscript('');
         if (audioContext) {
           audioContext.close();
@@ -924,7 +933,6 @@ export default function MedicalReportGenerator() {
                     <div className="relative">
                       <textarea
                         ref={textareaRef}
-                        id="findings-textarea"
                         rows={12}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                         placeholder="Enter or dictate medical findings..."
@@ -942,15 +950,40 @@ export default function MedicalReportGenerator() {
                       <button
                         type="button"
                         onClick={toggleRecording}
-                        className={`absolute right-2 top-2 inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${
-                          isRecording ? 'bg-red-100' : ''
+                        disabled={micButtonState === 'processing'}
+                        className={`absolute right-2 top-2 p-2 rounded-full transition-all duration-200 ${
+                          micButtonState === 'idle'
+                            ? 'bg-white hover:bg-gray-100'
+                            : micButtonState === 'recording'
+                            ? 'bg-red-500 hover:bg-red-600'
+                            : 'bg-gray-200'
                         }`}
                         title={isRecording ? 'Stop Dictation' : 'Start Dictation'}
                       >
-                        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" fill="currentColor"/>
-                          <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" fill="currentColor"/>
-                        </svg>
+                        <div className="relative">
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            className={`h-5 w-5 transition-transform duration-200 ${
+                              micButtonState === 'recording' ? 'text-white scale-110' : 'text-gray-700'
+                            }`}
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+                            />
+                          </svg>
+                          {micButtonState === 'recording' && (
+                            <span className="absolute -top-1 -right-1 w-2 h-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                            </span>
+                          )}
+                        </div>
                       </button>
                       {isRecording && (
                         <div className="absolute -bottom-20 left-0 right-0 h-16 bg-white border border-gray-200 rounded-md overflow-hidden">
@@ -963,7 +996,6 @@ export default function MedicalReportGenerator() {
                         </div>
                       )}
                     </div>
-                    {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
                   </div>
                 </div>
 
@@ -978,6 +1010,30 @@ export default function MedicalReportGenerator() {
                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 font-mono"
                     placeholder="AI-generated report will appear here..."
                   />
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      onClick={handleGenerateReport}
+                      disabled={!findings || loading}
+                      className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {loading ? (
+                        <>
+                          <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                          Generate Report
+                        </>
+                      )}
+                    </button>
+                  </div>
                   <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2">
                     <button
                       onClick={handleRefine}
@@ -987,7 +1043,7 @@ export default function MedicalReportGenerator() {
                       {isRefining ? (
                         <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                         </svg>
                       ) : (
                         'Refine'
@@ -1001,7 +1057,7 @@ export default function MedicalReportGenerator() {
                       {isSaving ? (
                         <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                         </svg>
                       ) : (
                         'Save'
@@ -1021,6 +1077,45 @@ export default function MedicalReportGenerator() {
           </div>
         </div>
       </main>
+      <div className="fixed top-6 right-6 flex flex-col gap-2">
+        {interimTranscript && (
+          <div className="bg-gray-800 bg-opacity-90 text-white p-4 rounded-lg max-w-md">
+            <div className="text-sm font-medium mb-1">Transcribing...</div>
+            <div className="text-xs opacity-90">{interimTranscript}</div>
+          </div>
+        )}
+        {loading && (
+          <div className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2">
+            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
+            Processing...
+          </div>
+        )}
+      </div>
+      <div className="fixed bottom-6 left-6 flex flex-col gap-2">
+        {error && (
+          <div className="bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg max-w-md animate-fade-in">
+            <div className="flex items-center gap-2">
+              <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+              {error}
+            </div>
+          </div>
+        )}
+        {successMessage && (
+          <div className="bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg max-w-md animate-fade-in">
+            <div className="flex items-center gap-2">
+              <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
+              {successMessage}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
