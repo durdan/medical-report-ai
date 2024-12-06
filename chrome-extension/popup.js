@@ -20,6 +20,8 @@ let analyser = null;
 let microphone = null;
 let animationFrame = null;
 let noiseFilter = null;
+let mediaRecorder = null;
+let audioChunks = [];
 
 // Initialize audio context and analyser with noise reduction
 function initializeAudioAnalyser() {
@@ -33,6 +35,100 @@ function initializeAudioAnalyser() {
     noiseFilter = audioContext.createBiquadFilter();
     noiseFilter.type = 'highpass';
     noiseFilter.frequency.value = 100; // Reduce low-frequency noise
+  }
+}
+
+// Function to convert audio blob to WAV format
+async function convertToWAV(audioBlob) {
+  const statusDiv = document.getElementById('dictation-status');
+  try {
+    console.log('Starting audio conversion...');
+    statusDiv.textContent = 'Creating audio context...';
+    
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    console.log('Audio context created');
+    
+    statusDiv.textContent = 'Decoding audio data...';
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    console.log('Array buffer created:', arrayBuffer.byteLength, 'bytes');
+    
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    console.log('Audio decoded:', {
+      duration: audioBuffer.duration,
+      numberOfChannels: audioBuffer.numberOfChannels,
+      sampleRate: audioBuffer.sampleRate
+    });
+    
+    // Create WAV file
+    statusDiv.textContent = 'Creating WAV buffer...';
+    const numberOfChannels = 1;
+    const length = audioBuffer.length;
+    const sampleRate = audioBuffer.sampleRate;
+    const wavBuffer = audioContext.createBuffer(numberOfChannels, length, sampleRate);
+    
+    // Copy the audio data
+    const channelData = audioBuffer.getChannelData(0);
+    wavBuffer.copyToChannel(channelData, 0);
+    console.log('WAV buffer created');
+
+    // Convert to WAV Blob using a simpler approach
+    statusDiv.textContent = 'Converting to WAV format...';
+    const wavData = convertBufferToWav(wavBuffer);
+    const wavBlob = new Blob([wavData], { type: 'audio/wav' });
+    console.log('WAV blob created:', wavBlob.size, 'bytes');
+    
+    statusDiv.textContent = 'Conversion complete';
+    return wavBlob;
+  } catch (error) {
+    console.error('Audio conversion error:', error);
+    statusDiv.textContent = 'Error converting audio: ' + error.message;
+    throw error;
+  }
+}
+
+// Function to convert buffer to WAV format
+function convertBufferToWav(buffer) {
+  const numberOfChannels = 1;
+  const sampleRate = buffer.sampleRate;
+  const format = 1; // PCM
+  const bitsPerSample = 16;
+  const bytesPerSample = bitsPerSample / 8;
+  const blockAlign = numberOfChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = buffer.length * blockAlign;
+  const arrayBuffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(arrayBuffer);
+  const channelData = buffer.getChannelData(0);
+
+  // Write WAV header
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, format, true);
+  view.setUint16(22, numberOfChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Write audio data
+  const offset = 44;
+  for (let i = 0; i < buffer.length; i++) {
+    const sample = Math.max(-1, Math.min(1, channelData[i]));
+    view.setInt16(offset + (i * bytesPerSample), sample * 0x7FFF, true);
+  }
+
+  return arrayBuffer;
+}
+
+// Helper function to write strings to DataView
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
   }
 }
 
@@ -65,33 +161,106 @@ function initializeSpeechRecognition() {
       statusDiv.textContent = 'Listening...';
       waveContainer.classList.add('recording');
 
-      // Start audio visualization with noise reduction
       try {
-        if (!microphone) {
-          const stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-              channelCount: 1
-            }
-          });
-          
-          microphone = audioContext.createMediaStreamSource(stream);
-          microphone.connect(noiseFilter);
-          noiseFilter.connect(analyser);
-        }
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1,
+            sampleRate: 16000 // Specify sample rate
+          }
+        });
+        
+        console.log('Audio stream created');
+        
+        // Initialize media recorder with audio/webm mimetype
+        mediaRecorder = new MediaRecorder(stream, {
+          mimeType: 'audio/webm;codecs=opus',
+          audioBitsPerSecond: 128000
+        });
+        console.log('MediaRecorder created with settings:', mediaRecorder.audioBitsPerSecond);
+        
+        audioChunks = [];
+        
+        mediaRecorder.ondataavailable = (event) => {
+          console.log('Data available:', event.data.size, 'bytes');
+          audioChunks.push(event.data);
+        };
+        
+        mediaRecorder.start(1000); // Collect data every second
+        console.log('Recording started');
+
+        // Initialize audio visualization
+        microphone = audioContext.createMediaStreamSource(stream);
+        microphone.connect(noiseFilter);
+        noiseFilter.connect(analyser);
         drawWave();
       } catch (err) {
         console.error('Error accessing microphone:', err);
+        statusDiv.textContent = 'Error: ' + err.message;
       }
     };
 
-    recognition.onend = () => {
+    recognition.onend = async () => {
       const dictateBtn = document.getElementById('dictate-btn');
       const statusDiv = document.getElementById('dictation-status');
       const waveContainer = document.getElementById('wave-container');
       const promptTextarea = document.getElementById('prompt');
+      
+      console.log('Recognition ended');
+      
+      // Stop recording and get audio blob
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        console.log('Stopping media recorder');
+        mediaRecorder.stop();
+        
+        mediaRecorder.onstop = async () => {
+          try {
+            console.log('Media recorder stopped');
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            console.log('Audio blob created:', audioBlob.size, 'bytes');
+            
+            // Convert to WAV format
+            statusDiv.textContent = 'Converting audio...';
+            const wavBlob = await convertToWAV(audioBlob);
+            console.log('WAV blob created:', wavBlob.size, 'bytes');
+            
+            // Send to Whisper API
+            statusDiv.textContent = 'Sending to Whisper API...';
+            
+            const formData = new FormData();
+            formData.append('audio', wavBlob, 'recording.wav');
+            
+            console.log('Sending request to Whisper API');
+            const response = await fetch(`${API_BASE_URL}/transcribe`, {
+              method: 'POST',
+              body: formData
+            });
+            
+            if (!response.ok) {
+              const errorData = await response.json();
+              throw new Error(errorData.error || 'Transcription failed');
+            }
+            
+            console.log('Received response from Whisper API');
+            const result = await response.json();
+            
+            // Compare with current text and show differences
+            const currentText = promptTextarea.value;
+            const whisperText = result.text;
+            
+            if (currentText !== whisperText) {
+              showTranscriptionDiff(currentText, whisperText);
+            }
+            
+            statusDiv.textContent = '';
+          } catch (err) {
+            console.error('Processing error:', err);
+            statusDiv.textContent = 'Error: ' + err.message;
+          }
+        };
+      }
       
       // Clean up any remaining interim text
       const content = promptTextarea.value;
@@ -286,6 +455,119 @@ function parseMarkdown(text) {
   } catch (error) {
     console.error('Error parsing markdown:', error);
     return text;
+  }
+}
+
+// Function to show transcription differences
+function showTranscriptionDiff(webSpeechText, whisperText) {
+  console.log('Showing transcription diff dialog');
+  console.log('Web Speech Text:', webSpeechText);
+  console.log('Whisper Text:', whisperText);
+  
+  // Remove any existing dialog
+  const existingDialog = document.querySelector('.diff-dialog');
+  if (existingDialog) {
+    existingDialog.remove();
+  }
+  
+  const diffDialog = document.createElement('div');
+  diffDialog.className = 'diff-dialog';
+  
+  const dialogContent = `
+    <div class="diff-content">
+      <h3>Transcription Differences Detected</h3>
+      <div class="transcriptions">
+        <div class="web-speech">
+          <h4>Web Speech API</h4>
+          <p>${webSpeechText}</p>
+        </div>
+        <div class="whisper">
+          <h4>Whisper API (More Accurate)</h4>
+          <p>${whisperText}</p>
+        </div>
+      </div>
+      <div class="diff-actions">
+        <button id="useWhisperBtn">Use Whisper Version</button>
+        <button id="keepCurrentBtn">Keep Current Version</button>
+      </div>
+    </div>
+  `;
+  
+  diffDialog.innerHTML = dialogContent;
+  document.body.appendChild(diffDialog);
+  
+  // Add event listeners
+  const useWhisperBtn = document.getElementById('useWhisperBtn');
+  const keepCurrentBtn = document.getElementById('keepCurrentBtn');
+  
+  useWhisperBtn.addEventListener('click', () => {
+    console.log('Use Whisper button clicked');
+    const promptTextarea = document.getElementById('prompt');
+    console.log('Found textarea:', promptTextarea);
+    console.log('Setting value to:', whisperText);
+    
+    if (promptTextarea) {
+      promptTextarea.value = whisperText;
+      
+      // Update status
+      const statusDiv = document.getElementById('dictation-status');
+      if (statusDiv) {
+        statusDiv.textContent = 'Whisper transcription applied';
+        setTimeout(() => {
+          statusDiv.textContent = '';
+        }, 2000);
+      }
+      
+      // Remove dialog
+      diffDialog.remove();
+    } else {
+      console.error('Prompt textarea not found!');
+    }
+  });
+  
+  keepCurrentBtn.addEventListener('click', () => {
+    console.log('Keep current button clicked');
+    diffDialog.remove();
+    
+    const statusDiv = document.getElementById('dictation-status');
+    if (statusDiv) {
+      statusDiv.textContent = 'Keeping current transcription';
+      setTimeout(() => {
+        statusDiv.textContent = '';
+      }, 2000);
+    }
+  });
+}
+
+// Make these functions globally accessible
+window.useWhisperTranscription = function(whisperText) {
+  const promptTextarea = document.getElementById('prompt');
+  promptTextarea.value = whisperText;
+  removeDiffDialog();
+  
+  // Update status
+  const statusDiv = document.getElementById('dictation-status');
+  statusDiv.textContent = 'Whisper transcription applied';
+  setTimeout(() => {
+    statusDiv.textContent = '';
+  }, 2000);
+};
+
+window.keepCurrentTranscription = function() {
+  removeDiffDialog();
+  
+  // Update status
+  const statusDiv = document.getElementById('dictation-status');
+  statusDiv.textContent = 'Keeping current transcription';
+  setTimeout(() => {
+    statusDiv.textContent = '';
+  }, 2000);
+};
+
+function removeDiffDialog() {
+  const diffDialog = document.querySelector('.diff-dialog');
+  if (diffDialog) {
+    diffDialog.remove();
   }
 }
 
