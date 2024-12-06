@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Medical Report AI Assistant",
+  "version": "1.0",
+  "description": "Generate medical reports using AI directly from your browser",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "cookies",
+    "windows"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://localhost:3000 'self'"
+  },
+  "action": {}
+}

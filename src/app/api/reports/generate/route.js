@@ -33,7 +33,27 @@ export async function POST(request) {
     const defaultPrompt = `You are an expert medical professional specializing in ${specialty}. 
 Generate a detailed medical report based on the following findings. 
 The report should be professional, accurate, and follow standard medical reporting format.
-Include an impression/conclusion section at the end.`;
+Include an impression/conclusion section at the end.
+
+Format the report in markdown with the following structure:
+
+# Medical Report - ${specialty}
+
+## Clinical Findings
+[Detailed findings based on input]
+
+## Analysis
+[Detailed analysis of findings]
+
+## Impression
+[Clear and concise impression/conclusion]
+
+Use proper markdown formatting:
+- Use headers (# ## ###) for sections
+- Use bold (**text**) for important findings
+- Use lists (- or 1.) for multiple points
+- Use > for notable quotes or highlights
+`;
 
     const systemPrompt = prompt?.content || defaultPrompt;
 
@@ -46,28 +66,33 @@ Include an impression/conclusion section at the end.`;
       ],
       temperature: 0.7,
       max_tokens: 1500,
-      stream: true // Enable streaming
+      stream: true
     });
 
-    // Create a custom stream that transforms OpenAI's stream into text
+    // Create a TransformStream to convert the OpenAI stream to SSE format
     const encoder = new TextEncoder();
     const customStream = new ReadableStream({
       async start(controller) {
         try {
-          let fullReport = '';
           for await (const chunk of stream) {
             const content = chunk.choices[0]?.delta?.content || '';
-            fullReport += content;
-            controller.enqueue(encoder.encode(content));
+            if (content) {
+              // Format as SSE
+              const sseMessage = `data: ${JSON.stringify({ content })}\n\n`;
+              controller.enqueue(encoder.encode(sseMessage));
+            }
           }
+          // Send end message
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           controller.close();
         } catch (error) {
+          console.error('Streaming error:', error);
           controller.error(error);
         }
       }
     });
 
-    // Return streaming response
+    // Return SSE response
     return new Response(customStream, {
       headers: {
         'Content-Type': 'text/event-stream',
