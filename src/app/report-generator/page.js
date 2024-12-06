@@ -18,16 +18,22 @@ const TranscriptionDialog = ({ webSpeechText, whisperText, onUseWhisper, onKeepC
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full p-6 max-h-[90vh] overflow-y-auto">
-        <h3 className="text-lg font-semibold mb-4">Transcription Differences Detected</h3>
+        <h3 className="text-lg font-semibold mb-4">Compare Transcriptions</h3>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           <div className="border rounded p-4">
-            <h4 className="font-medium mb-2">Web Speech API</h4>
+            <h4 className="font-medium mb-2 flex items-center gap-2">
+              <span>Web Speech API</span>
+              <span className="text-xs text-gray-500">(Real-time)</span>
+            </h4>
             <p className="whitespace-pre-wrap">{webSpeechText}</p>
           </div>
           
           <div className="border rounded p-4 bg-blue-50">
-            <h4 className="font-medium mb-2">Whisper API (More Accurate)</h4>
+            <h4 className="font-medium mb-2 flex items-center gap-2">
+              <span>Whisper API</span>
+              <span className="text-xs text-gray-500">(High Accuracy)</span>
+            </h4>
             <p className="whitespace-pre-wrap">{whisperText}</p>
           </div>
         </div>
@@ -43,7 +49,13 @@ const TranscriptionDialog = ({ webSpeechText, whisperText, onUseWhisper, onKeepC
             onClick={onKeepCurrent}
             className="bg-gray-200 text-gray-800 px-4 py-2 rounded hover:bg-gray-300 transition-colors"
           >
-            Keep Current Version
+            Use Web Speech Version
+          </button>
+          <button
+            onClick={onClose}
+            className="border border-gray-300 text-gray-600 px-4 py-2 rounded hover:bg-gray-100 transition-colors"
+          >
+            Cancel
           </button>
         </div>
       </div>
@@ -80,6 +92,12 @@ export default function MedicalReportGenerator() {
   const [currentWebSpeechText, setCurrentWebSpeechText] = useState('');
   const [micButtonState, setMicButtonState] = useState('idle'); // 'idle', 'recording', 'processing'
   const [visualFeedback, setVisualFeedback] = useState('');
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const [recordingStartTime, setRecordingStartTime] = useState(null);
+  const [currentDictationSegment, setCurrentDictationSegment] = useState('');
+  const [audioSegments, setAudioSegments] = useState([]);
+  const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
+  const [recordingSession, setRecordingSession] = useState(null);
 
   // Refs for audio visualization
   const audioContextRef = useRef(null);
@@ -99,7 +117,7 @@ export default function MedicalReportGenerator() {
       // Enhanced recognition settings
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.maxAlternatives = 3;
+      recognition.maxAlternatives = 1;
       recognition.lang = 'en-US';
 
       // Add medical terms to recognition grammar if supported
@@ -111,148 +129,20 @@ export default function MedicalReportGenerator() {
         recognition.grammars = grammarList;
       }
 
-      recognition.onresult = async (event) => {
-        let finalTranscript = '';
-        let currentInterim = '';
-
-        // Get cursor position
-        const textarea = textareaRef.current;
-        const cursorPosition = textarea?.selectionStart || lastInterimEnd;
-
-        // Process results with confidence scoring
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          // Get the most confident result
-          let bestAlternative = event.results[i][0];
-          for (let j = 1; j < event.results[i].length; j++) {
-            if (event.results[i][j].confidence > bestAlternative.confidence) {
-              bestAlternative = event.results[i][j];
-            }
-          }
-
-          const transcript = bestAlternative.transcript;
-          
-          if (event.results[i].isFinal) {
-            const processedTranscript = postProcessTranscript(transcript);
-            finalTranscript += processedTranscript;
-            
-            // Send to Whisper API for verification
-            if (mediaRecorderRef.current && audioChunksRef.current.length > 0) {
-              const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-              const whisperResult = await sendToWhisper(audioBlob);
-              
-              if (whisperResult && whisperResult !== processedTranscript) {
-                setCurrentWebSpeechText(processedTranscript);
-                setWhisperText(whisperResult);
-                setShowTranscriptionDialog(true);
-                return; // Wait for user choice
-              }
-            }
-            
-            // If no Whisper result or they're the same, proceed with Web Speech
-            setFindings(prev => {
-              const beforeCursor = prev.slice(0, cursorPosition);
-              const afterCursor = prev.slice(cursorPosition);
-              return beforeCursor + finalTranscript + afterCursor;
-            });
-            
-            setLastInterimEnd(cursorPosition + finalTranscript.length);
-          } else {
-            currentInterim += transcript;
-          }
-        }
-
-        if (!finalTranscript) {
-          setInterimTranscript(currentInterim);
-        }
-      };
-
-      // Initialize audio context with noise reduction
-      const initializeAudio = async () => {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 2048;
-        analyser.smoothingTimeConstant = 0.8;
-
-        const noiseFilter = audioContext.createBiquadFilter();
-        noiseFilter.type = 'highpass';
-        noiseFilter.frequency.value = 100;
-
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-              channelCount: 1
-            }
-          });
-
-          const microphone = audioContext.createMediaStreamSource(stream);
-          microphone.connect(noiseFilter);
-          noiseFilter.connect(analyser);
-          
-          return { audioContext, analyser, stream };
-        } catch (err) {
-          console.error('Error accessing microphone:', err);
-          setError('Error accessing microphone: ' + err.message);
-          return null;
-        }
-      };
-
-      recognition.onstart = async () => {
-        setIsRecording(true);
-        setMicButtonState('recording');
-        setVisualFeedback('Recording...');
-        const audio = await initializeAudio();
-        if (audio) {
-          setAudioContext(audio.audioContext);
-          setAnalyser(audio.analyser);
-        }
-      };
-
       recognition.onerror = (event) => {
-        setIsRecording(false);
-        setMicButtonState('idle');
-        setVisualFeedback(`Error: ${event.error}`);
-        setTimeout(() => setVisualFeedback(''), 3000);
-        let errorMessage = 'Speech recognition error: ';
-        
-        switch (event.error) {
-          case 'network':
-            errorMessage += 'Network error occurred. Please check your connection.';
-            break;
-          case 'no-speech':
-            errorMessage += 'No speech detected. Please try again.';
-            break;
-          case 'audio-capture':
-            errorMessage += 'Microphone not found or not working properly.';
-            break;
-          case 'not-allowed':
-            errorMessage += 'Microphone access denied. Please allow microphone access.';
-            break;
-          default:
-            errorMessage += event.error;
+        if (event.error !== 'no-speech') {
+          setError(`Speech recognition error: ${event.error}`);
         }
-        
-        setError(errorMessage);
-        setInterimTranscript('');
       };
 
       recognition.onend = () => {
         setIsRecording(false);
-        setMicButtonState('idle');
-        setVisualFeedback('');
         setInterimTranscript('');
-        if (audioContext) {
-          audioContext.close();
-          setAudioContext(null);
-          setAnalyser(null);
-        }
       };
 
       setRecognition(recognition);
     }
-  }, [lastInterimEnd, audioContext]);
+  }, []);
 
   // Post-process transcript for better accuracy
   const postProcessTranscript = (transcript) => {
@@ -335,66 +225,138 @@ export default function MedicalReportGenerator() {
     draw();
   };
 
-  // Handle recording toggle
-  const toggleRecording = async () => {
-    if (!recognition) {
-      setError('Speech recognition is not supported in your browser');
-      return;
-    }
+  const startRecording = async () => {
+    try {
+      // Reset states
+      setCurrentDictationSegment('');
+      audioChunksRef.current = [];
+      setInterimTranscript('');
+      
+      // Get audio stream
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true
+        } 
+      });
 
-    if (!isRecording) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            sampleRate: 16000,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          }
-        });
-        
-        // Set up MediaRecorder with specific MIME type
-        const mediaRecorder = new MediaRecorder(stream, {
+      // Create new recording session
+      const session = {
+        stream,
+        startTime: Date.now(),
+        webSpeechText: '',
+        mediaRecorder: new MediaRecorder(stream, {
           mimeType: 'audio/webm;codecs=opus',
-          audioBitsPerSecond: 128000
-        });
-        
-        mediaRecorderRef.current = mediaRecorder;
-        audioChunksRef.current = [];
-        
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            audioChunksRef.current.push(event.data);
+          bitsPerSecond: 16000
+        })
+      };
+
+      // Set up media recorder
+      session.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      // Start Web Speech
+      if (recognition) {
+        recognition.onresult = (event) => {
+          let interimTranscript = '';
+          let finalTranscript = session.webSpeechText;
+
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              finalTranscript += transcript + ' ';
+              session.webSpeechText = finalTranscript;
+            } else {
+              interimTranscript += transcript;
+            }
+          }
+
+          setInterimTranscript(interimTranscript);
+          setCurrentDictationSegment(finalTranscript);
+        };
+
+        recognition.start();
+      }
+
+      // Start media recorder
+      session.mediaRecorder.start();
+      setRecordingSession(session);
+      setIsRecording(true);
+      setMicButtonState('recording');
+      setVisualFeedback('Recording...');
+
+    } catch (error) {
+      setError('Failed to start recording: ' + error.message);
+      console.error('Recording error:', error);
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!recordingSession) return;
+
+    try {
+      // Stop Web Speech
+      if (recognition) {
+        recognition.stop();
+      }
+
+      // Stop media recorder and get the audio
+      return new Promise((resolve) => {
+        recordingSession.mediaRecorder.onstop = async () => {
+          try {
+            const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+            const formData = new FormData();
+            formData.append('audio', audioBlob);
+
+            // Send to Whisper API
+            const response = await fetch('/api/transcribe', {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (!response.ok) throw new Error('Transcription failed');
+            
+            const { text: whisperText } = await response.json();
+
+            // Show comparison dialog with synchronized texts
+            setShowTranscriptionDialog(true);
+            setWhisperText(whisperText.trim());
+            setCurrentWebSpeechText(recordingSession.webSpeechText.trim());
+
+          } catch (error) {
+            setError('Failed to process audio: ' + error.message);
+            console.error('Processing error:', error);
+          } finally {
+            // Cleanup
+            recordingSession.stream.getTracks().forEach(track => track.stop());
+            setRecordingSession(null);
+            setMicButtonState('idle');
+            setVisualFeedback('');
+            resolve();
           }
         };
-        
-        mediaRecorder.start(1000); // Collect data every second
-        
-        // Set up audio visualization
-        microphoneRef.current = audioContextRef.current.createMediaStreamSource(stream);
-        microphoneRef.current.connect(analyserRef.current);
-        drawWave();
-        
-        recognition.start();
-      } catch (err) {
-        console.error('Error accessing microphone:', err);
-        setError('Error accessing microphone: ' + err.message);
-      }
-    } else {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-      }
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      if (microphoneRef.current) {
-        microphoneRef.current.disconnect();
-        microphoneRef.current = null;
-      }
-      recognition.stop();
+
+        recordingSession.mediaRecorder.stop();
+      });
+    } catch (error) {
+      setError('Failed to stop recording: ' + error.message);
+      console.error('Stop recording error:', error);
     }
-    setIsRecording(!isRecording);
+  };
+
+  const toggleRecording = async () => {
+    if (isRecording) {
+      setMicButtonState('processing');
+      setVisualFeedback('Processing...');
+      await stopRecording();
+    } else {
+      await startRecording();
+    }
   };
 
   // Load existing report if editing
@@ -753,7 +715,7 @@ export default function MedicalReportGenerator() {
       console.log('Audio converted successfully');
       
       const formData = new FormData();
-      formData.append('audio', wavBlob, 'recording.wav');
+      formData.append('audio', wavBlob);
 
       console.log('Sending to Whisper API...');
       const response = await fetch('/api/transcribe', {
@@ -776,33 +738,38 @@ export default function MedicalReportGenerator() {
   };
 
   const handleUseWhisper = () => {
-    const cursorPosition = textareaRef.current?.selectionStart || lastInterimEnd;
-    
-    setFindings(prev => {
-      const beforeCursor = prev.slice(0, cursorPosition);
-      const afterCursor = prev.slice(cursorPosition);
-      return beforeCursor + whisperText + afterCursor;
-    });
-    
-    setLastInterimEnd(cursorPosition + whisperText.length);
+    insertTextAtCursor(whisperText);
     setShowTranscriptionDialog(false);
     setWhisperText('');
     setCurrentWebSpeechText('');
   };
 
-  const handleKeepCurrent = () => {
-    const cursorPosition = textareaRef.current?.selectionStart || lastInterimEnd;
-    
-    setFindings(prev => {
-      const beforeCursor = prev.slice(0, cursorPosition);
-      const afterCursor = prev.slice(cursorPosition);
-      return beforeCursor + currentWebSpeechText + afterCursor;
-    });
-    
-    setLastInterimEnd(cursorPosition + currentWebSpeechText.length);
+  const handleKeepWebSpeech = () => {
+    insertTextAtCursor(currentWebSpeechText);
     setShowTranscriptionDialog(false);
     setWhisperText('');
     setCurrentWebSpeechText('');
+  };
+
+  const handleTextareaChange = (e) => {
+    setFindings(e.target.value);
+    setCursorPosition(e.target.selectionStart);
+  };
+
+  const insertTextAtCursor = (text) => {
+    const before = findings.slice(0, cursorPosition);
+    const after = findings.slice(cursorPosition);
+    const newText = before + text + after;
+    setFindings(newText);
+    // Update cursor position to end of inserted text
+    const newPosition = cursorPosition + text.length;
+    setCursorPosition(newPosition);
+    // Update textarea cursor position
+    if (textareaRef.current) {
+      textareaRef.current.selectionStart = newPosition;
+      textareaRef.current.selectionEnd = newPosition;
+      textareaRef.current.focus();
+    }
   };
 
   return (
@@ -812,7 +779,7 @@ export default function MedicalReportGenerator() {
           webSpeechText={currentWebSpeechText}
           whisperText={whisperText}
           onUseWhisper={handleUseWhisper}
-          onKeepCurrent={handleKeepCurrent}
+          onKeepCurrent={handleKeepWebSpeech}
           onClose={() => setShowTranscriptionDialog(false)}
         />
       )}
@@ -937,10 +904,9 @@ export default function MedicalReportGenerator() {
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                         placeholder="Enter or dictate medical findings..."
                         value={findings}
-                        onChange={(e) => {
-                          setFindings(e.target.value);
-                          setLastInterimEnd(e.target.selectionStart);
-                        }}
+                        onChange={handleTextareaChange}
+                        onClick={(e) => setCursorPosition(e.target.selectionStart)}
+                        onKeyUp={(e) => setCursorPosition(e.target.selectionStart)}
                       />
                       {isRecording && interimTranscript && (
                         <div className="absolute bottom-0 left-0 right-0 p-2 bg-gray-50 text-gray-500 text-sm border-t">
@@ -1020,7 +986,7 @@ export default function MedicalReportGenerator() {
                         <>
                           <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                           </svg>
                           Generating...
                         </>
@@ -1109,7 +1075,7 @@ export default function MedicalReportGenerator() {
           <div className="bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg max-w-md animate-fade-in">
             <div className="flex items-center gap-2">
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
               </svg>
               {successMessage}
             </div>
