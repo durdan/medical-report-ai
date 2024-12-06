@@ -1,10 +1,260 @@
 // Configuration
 const API_BASE_URL = 'http://localhost:3000/api';
 
+// Medical terminology and common words for improved recognition
+const MEDICAL_TERMS = [
+  'patient', 'diagnosis', 'treatment', 'symptoms', 'prognosis',
+  'hypertension', 'diabetes', 'cardiac', 'respiratory', 'neurological',
+  'assessment', 'examination', 'prescription', 'medication', 'therapy',
+  'chronic', 'acute', 'bilateral', 'malignant', 'benign',
+  'anterior', 'posterior', 'lateral', 'medial', 'proximal', 'distal'
+];
+
 console.log('Popup script loaded!');
 
 // Store the original markdown text
 let originalMarkdown = '';
+let recognition = null;
+let audioContext = null;
+let analyser = null;
+let microphone = null;
+let animationFrame = null;
+let noiseFilter = null;
+
+// Initialize audio context and analyser with noise reduction
+function initializeAudioAnalyser() {
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 2048; // Increased for better frequency resolution
+    analyser.smoothingTimeConstant = 0.8; // Smoother transitions
+
+    // Create noise reduction filter
+    noiseFilter = audioContext.createBiquadFilter();
+    noiseFilter.type = 'highpass';
+    noiseFilter.frequency.value = 100; // Reduce low-frequency noise
+  }
+}
+
+// Initialize speech recognition with enhanced settings
+function initializeSpeechRecognition() {
+  if ('webkitSpeechRecognition' in window) {
+    recognition = new webkitSpeechRecognition();
+    
+    // Enhanced recognition settings
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 3; // Get multiple alternatives
+    recognition.lang = 'en-US';
+
+    // Add medical terms to recognition grammar if supported
+    if ('SpeechGrammarList' in window) {
+      const grammarList = new window.SpeechGrammarList();
+      const terms = MEDICAL_TERMS.join(' | ');
+      const grammar = '#JSGF V1.0; grammar medical; public <medical> = ' + terms + ';';
+      grammarList.addFromString(grammar, 1);
+      recognition.grammars = grammarList;
+    }
+
+    recognition.onstart = async () => {
+      const dictateBtn = document.getElementById('dictate-btn');
+      const statusDiv = document.getElementById('dictation-status');
+      const waveContainer = document.getElementById('wave-container');
+      
+      dictateBtn.style.backgroundColor = '#ff4444';
+      statusDiv.textContent = 'Listening...';
+      waveContainer.classList.add('recording');
+
+      // Start audio visualization with noise reduction
+      try {
+        if (!microphone) {
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              channelCount: 1
+            }
+          });
+          
+          microphone = audioContext.createMediaStreamSource(stream);
+          microphone.connect(noiseFilter);
+          noiseFilter.connect(analyser);
+        }
+        drawWave();
+      } catch (err) {
+        console.error('Error accessing microphone:', err);
+      }
+    };
+
+    recognition.onend = () => {
+      const dictateBtn = document.getElementById('dictate-btn');
+      const statusDiv = document.getElementById('dictation-status');
+      const waveContainer = document.getElementById('wave-container');
+      const promptTextarea = document.getElementById('prompt');
+      
+      // Clean up any remaining interim text
+      const content = promptTextarea.value;
+      const lastIndex = content.lastIndexOf('[interim]');
+      if (lastIndex !== -1) {
+        promptTextarea.value = content.substring(0, lastIndex);
+      }
+
+      dictateBtn.style.backgroundColor = '#f8f9fa';
+      statusDiv.textContent = '';
+      waveContainer.classList.remove('recording');
+
+      // Stop audio visualization
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+      }
+      if (microphone) {
+        microphone.disconnect();
+        microphone = null;
+      }
+    };
+
+    recognition.onresult = (event) => {
+      const promptTextarea = document.getElementById('prompt');
+      let interimTranscript = '';
+      let finalTranscript = '';
+
+      // Get the cursor position and content
+      const cursorPosition = promptTextarea.selectionStart;
+      const currentContent = promptTextarea.value;
+
+      // Remove any previous interim results
+      const lastIndex = currentContent.lastIndexOf('[interim]');
+      const cleanContent = lastIndex !== -1 
+        ? currentContent.substring(0, lastIndex)
+        : currentContent;
+
+      // Process results with confidence scoring
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        // Get the most confident result
+        let bestAlternative = event.results[i][0];
+        for (let j = 1; j < event.results[i].length; j++) {
+          if (event.results[i][j].confidence > bestAlternative.confidence) {
+            bestAlternative = event.results[i][j];
+          }
+        }
+
+        const transcript = bestAlternative.transcript;
+        
+        if (event.results[i].isFinal) {
+          // Post-process the transcript
+          const processed = postProcessTranscript(transcript);
+          finalTranscript += processed;
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+
+      // Update the content
+      if (finalTranscript) {
+        const beforeCursor = cleanContent.slice(0, cursorPosition);
+        const afterCursor = cleanContent.slice(cursorPosition);
+        promptTextarea.value = beforeCursor + finalTranscript + afterCursor;
+        
+        const newPosition = cursorPosition + finalTranscript.length;
+        promptTextarea.setSelectionRange(newPosition, newPosition);
+      } else if (interimTranscript) {
+        const beforeCursor = cleanContent.slice(0, cursorPosition);
+        const afterCursor = cleanContent.slice(cursorPosition);
+        promptTextarea.value = beforeCursor + '[interim]' + interimTranscript + afterCursor;
+        
+        promptTextarea.setSelectionRange(cursorPosition, cursorPosition);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      const statusDiv = document.getElementById('dictation-status');
+      let errorMessage = 'Error: ';
+      
+      switch (event.error) {
+        case 'network':
+          errorMessage += 'Network error occurred. Please check your connection.';
+          break;
+        case 'no-speech':
+          errorMessage += 'No speech detected. Please try again.';
+          break;
+        case 'audio-capture':
+          errorMessage += 'Microphone not found or not working properly.';
+          break;
+        case 'not-allowed':
+          errorMessage += 'Microphone access denied. Please allow microphone access.';
+          break;
+        default:
+          errorMessage += event.error;
+      }
+      
+      statusDiv.textContent = errorMessage;
+      console.error('Speech recognition error:', event.error);
+    };
+  }
+}
+
+// Post-process transcript for better accuracy
+function postProcessTranscript(transcript) {
+  // Capitalize medical terms
+  let processed = transcript;
+  MEDICAL_TERMS.forEach(term => {
+    const regex = new RegExp(`\\b${term}\\b`, 'gi');
+    processed = processed.replace(regex, term.charAt(0).toUpperCase() + term.slice(1));
+  });
+
+  // Add proper spacing after punctuation
+  processed = processed.replace(/([.,!?])(\w)/g, '$1 $2');
+  
+  // Capitalize first letter of sentences
+  processed = processed.replace(/(^\w|[.!?]\s+\w)/g, letter => letter.toUpperCase());
+
+  return processed;
+}
+
+// Draw audio wave
+function drawWave() {
+  const canvas = document.getElementById('wave-canvas');
+  const ctx = canvas.getContext('2d');
+  const width = canvas.width;
+  const height = canvas.height;
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+
+  function draw() {
+    animationFrame = requestAnimationFrame(draw);
+
+    analyser.getByteTimeDomainData(dataArray);
+
+    ctx.fillStyle = 'rgb(255, 255, 255)';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgb(0, 123, 255)';
+    ctx.beginPath();
+
+    const sliceWidth = width / bufferLength;
+    let x = 0;
+
+    for (let i = 0; i < bufferLength; i++) {
+      const v = dataArray[i] / 128.0;
+      const y = v * height / 2;
+
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+
+      x += sliceWidth;
+    }
+
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
+  }
+
+  draw();
+}
 
 // Simple markdown parser
 function parseMarkdown(text) {
@@ -41,6 +291,10 @@ function parseMarkdown(text) {
 
 document.addEventListener('DOMContentLoaded', () => {
   console.log('DOM loaded');
+  
+  // Initialize audio context and speech recognition
+  initializeAudioAnalyser();
+  initializeSpeechRecognition();
 
   // Test marked library
   if (typeof marked !== 'undefined') {
@@ -61,6 +315,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const emailInput = document.getElementById('email');
   const passwordInput = document.getElementById('password');
   const copyBtn = document.getElementById('copy-btn');
+  const dictateBtn = document.getElementById('dictate-btn');
 
   console.log('Initial elements found:', {
     loginSection: !!loginSection,
@@ -72,7 +327,8 @@ document.addEventListener('DOMContentLoaded', () => {
     promptTextarea: !!promptTextarea,
     emailInput: !!emailInput,
     passwordInput: !!passwordInput,
-    copyBtn: !!copyBtn
+    copyBtn: !!copyBtn,
+    dictateBtn: !!dictateBtn
   });
 
   // Add login button handler
@@ -164,6 +420,23 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error('Failed to copy text:', err);
     }
   });
+
+  // Add dictation button handler
+  if (dictateBtn && recognition) {
+    let isRecording = false;
+    
+    dictateBtn.addEventListener('click', () => {
+      if (!isRecording) {
+        recognition.start();
+      } else {
+        recognition.stop();
+      }
+      isRecording = !isRecording;
+    });
+  } else if (dictateBtn) {
+    dictateBtn.style.display = 'none';
+    console.warn('Speech recognition not supported in this browser');
+  }
 
   // Add generate button handler
   async function handleGenerateReport(e) {

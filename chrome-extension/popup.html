@@ -136,6 +136,62 @@
       height: 14px;
       display: inline-block;
     }
+
+    .input-group {
+      margin-bottom: 20px;
+    }
+
+    .textarea-container {
+      position: relative;
+    }
+
+    .icon-button {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background-color: #f8f9fa;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 5px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      color: #444;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .icon-button:hover {
+      background-color: #e9ecef;
+    }
+
+    .status-text {
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
+
+    .wave-container {
+      display: none;
+      position: absolute;
+      bottom: -70px;
+      left: 0;
+      right: 0;
+      height: 60px;
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .wave-container.recording {
+      display: block;
+    }
+
+    #wave-canvas {
+      width: 100%;
+      height: 100%;
+    }
   </style>
 </head>
 <body>
@@ -162,7 +218,22 @@
         <option value="pediatrics">Pediatrics</option>
         <option value="oncology">Oncology</option>
       </select>
-      <textarea id="prompt" rows="5" placeholder="Enter medical findings..."></textarea>
+      <div class="input-group">
+        <label for="prompt">Medical Findings:</label>
+        <div class="textarea-container">
+          <textarea id="prompt" rows="6" placeholder="Enter or dictate medical findings..."></textarea>
+          <button id="dictate-btn" class="icon-button" title="Start Dictation">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" fill="currentColor"/>
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" fill="currentColor"/>
+            </svg>
+          </button>
+          <div id="wave-container" class="wave-container">
+            <canvas id="wave-canvas" height="60"></canvas>
+          </div>
+        </div>
+        <div id="dictation-status" class="status-text"></div>
+      </div>
       <button id="generate-btn">Generate Report</button>
       <div class="result-container">
         <button id="copy-btn" style="display: none;">

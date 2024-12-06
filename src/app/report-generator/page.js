@@ -1,9 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { MEDICAL_SPECIALTIES } from '@/lib/constants';
+
+// Medical terminology for improved recognition
+const MEDICAL_TERMS = [
+  'patient', 'diagnosis', 'treatment', 'symptoms', 'prognosis',
+  'hypertension', 'diabetes', 'cardiac', 'respiratory', 'neurological',
+  'assessment', 'examination', 'prescription', 'medication', 'therapy',
+  'chronic', 'acute', 'bilateral', 'malignant', 'benign',
+  'anterior', 'posterior', 'lateral', 'medial', 'proximal', 'distal'
+];
 
 export default function MedicalReportGenerator() {
   const searchParams = useSearchParams();
@@ -13,6 +22,7 @@ export default function MedicalReportGenerator() {
   const [selectedPrompt, setSelectedPrompt] = useState({ id: 'default', name: 'Default Prompt' });
   const [selectedPromptData, setSelectedPromptData] = useState(null);
   const [findings, setFindings] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState('');
   const [report, setReport] = useState('');
   const [specialty, setSpecialty] = useState('General');
   const [loading, setLoading] = useState(false);
@@ -23,6 +33,275 @@ export default function MedicalReportGenerator() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [isManualPromptSelection, setIsManualPromptSelection] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recognition, setRecognition] = useState(null);
+  const [lastInterimEnd, setLastInterimEnd] = useState(0);
+  const [audioContext, setAudioContext] = useState(null);
+  const [analyser, setAnalyser] = useState(null);
+
+  // Refs for audio visualization
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const microphoneRef = useRef(null);
+  const animationFrameRef = useRef(null);
+  const canvasRef = useRef(null);
+  const textareaRef = useRef(null);
+
+  useEffect(() => {
+    // Initialize speech recognition with enhanced settings
+    if (typeof window !== 'undefined' && 'webkitSpeechRecognition' in window) {
+      const recognition = new webkitSpeechRecognition();
+      
+      // Enhanced recognition settings
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 3;
+      recognition.lang = 'en-US';
+
+      // Add medical terms to recognition grammar if supported
+      if ('SpeechGrammarList' in window) {
+        const grammarList = new window.SpeechGrammarList();
+        const terms = MEDICAL_TERMS.join(' | ');
+        const grammar = '#JSGF V1.0; grammar medical; public <medical> = ' + terms + ';';
+        grammarList.addFromString(grammar, 1);
+        recognition.grammars = grammarList;
+      }
+
+      recognition.onresult = (event) => {
+        let finalTranscript = '';
+        let currentInterim = '';
+
+        // Get cursor position
+        const textarea = textareaRef.current;
+        const cursorPosition = textarea?.selectionStart || lastInterimEnd;
+
+        // Process results with confidence scoring
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          // Get the most confident result
+          let bestAlternative = event.results[i][0];
+          for (let j = 1; j < event.results[i].length; j++) {
+            if (event.results[i][j].confidence > bestAlternative.confidence) {
+              bestAlternative = event.results[i][j];
+            }
+          }
+
+          const transcript = bestAlternative.transcript;
+          
+          if (event.results[i].isFinal) {
+            // Post-process the transcript
+            finalTranscript += postProcessTranscript(transcript);
+          } else {
+            currentInterim += transcript;
+          }
+        }
+
+        if (finalTranscript) {
+          // Update main content with final transcript
+          setFindings(prev => {
+            const beforeCursor = prev.slice(0, cursorPosition);
+            const afterCursor = prev.slice(cursorPosition);
+            return beforeCursor + finalTranscript + afterCursor;
+          });
+          
+          setLastInterimEnd(cursorPosition + finalTranscript.length);
+          setInterimTranscript('');
+        } else {
+          setInterimTranscript(currentInterim);
+        }
+      };
+
+      // Initialize audio context with noise reduction
+      const initializeAudio = async () => {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.8;
+
+        const noiseFilter = audioContext.createBiquadFilter();
+        noiseFilter.type = 'highpass';
+        noiseFilter.frequency.value = 100;
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              channelCount: 1
+            }
+          });
+
+          const microphone = audioContext.createMediaStreamSource(stream);
+          microphone.connect(noiseFilter);
+          noiseFilter.connect(analyser);
+          
+          return { audioContext, analyser, stream };
+        } catch (err) {
+          console.error('Error accessing microphone:', err);
+          setError('Error accessing microphone: ' + err.message);
+          return null;
+        }
+      };
+
+      recognition.onstart = async () => {
+        setIsRecording(true);
+        const audio = await initializeAudio();
+        if (audio) {
+          setAudioContext(audio.audioContext);
+          setAnalyser(audio.analyser);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        let errorMessage = 'Speech recognition error: ';
+        
+        switch (event.error) {
+          case 'network':
+            errorMessage += 'Network error occurred. Please check your connection.';
+            break;
+          case 'no-speech':
+            errorMessage += 'No speech detected. Please try again.';
+            break;
+          case 'audio-capture':
+            errorMessage += 'Microphone not found or not working properly.';
+            break;
+          case 'not-allowed':
+            errorMessage += 'Microphone access denied. Please allow microphone access.';
+            break;
+          default:
+            errorMessage += event.error;
+        }
+        
+        setError(errorMessage);
+        setIsRecording(false);
+        setInterimTranscript('');
+      };
+
+      recognition.onend = () => {
+        setIsRecording(false);
+        setInterimTranscript('');
+        if (audioContext) {
+          audioContext.close();
+          setAudioContext(null);
+          setAnalyser(null);
+        }
+      };
+
+      setRecognition(recognition);
+    }
+  }, [lastInterimEnd, audioContext]);
+
+  // Post-process transcript for better accuracy
+  const postProcessTranscript = (transcript) => {
+    // Capitalize medical terms
+    let processed = transcript;
+    MEDICAL_TERMS.forEach(term => {
+      const regex = new RegExp(`\\b${term}\\b`, 'gi');
+      processed = processed.replace(regex, term.charAt(0).toUpperCase() + term.slice(1));
+    });
+
+    // Add proper spacing after punctuation
+    processed = processed.replace(/([.,!?])(\w)/g, '$1 $2');
+    
+    // Capitalize first letter of sentences
+    processed = processed.replace(/(^\w|[.!?]\s+\w)/g, letter => letter.toUpperCase());
+
+    return processed;
+  };
+
+  // Initialize audio context
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      analyserRef.current = audioContextRef.current.createAnalyser();
+      analyserRef.current.fftSize = 256;
+    }
+    
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (microphoneRef.current) {
+        microphoneRef.current.disconnect();
+      }
+    };
+  }, []);
+
+  // Draw audio wave function
+  const drawWave = () => {
+    if (!canvasRef.current || !analyserRef.current) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    const bufferLength = analyserRef.current.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const draw = () => {
+      animationFrameRef.current = requestAnimationFrame(draw);
+      analyserRef.current.getByteTimeDomainData(dataArray);
+
+      ctx.fillStyle = 'rgb(255, 255, 255)';
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgb(99, 102, 241)'; // Indigo color
+      ctx.beginPath();
+
+      const sliceWidth = width / bufferLength;
+      let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0;
+        const y = v * height / 2;
+
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+
+        x += sliceWidth;
+      }
+
+      ctx.lineTo(width, height / 2);
+      ctx.stroke();
+    };
+
+    draw();
+  };
+
+  // Handle recording toggle
+  const toggleRecording = async () => {
+    if (!recognition) {
+      setError('Speech recognition is not supported in your browser');
+      return;
+    }
+
+    if (!isRecording) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        microphoneRef.current = audioContextRef.current.createMediaStreamSource(stream);
+        microphoneRef.current.connect(analyserRef.current);
+        drawWave();
+        recognition.start();
+      } catch (err) {
+        console.error('Error accessing microphone:', err);
+        setError('Error accessing microphone: ' + err.message);
+      }
+    } else {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (microphoneRef.current) {
+        microphoneRef.current.disconnect();
+        microphoneRef.current = null;
+      }
+      recognition.stop();
+    }
+    setIsRecording(!isRecording);
+  };
 
   // Load existing report if editing
   useEffect(() => {
@@ -432,31 +711,50 @@ export default function MedicalReportGenerator() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Medical Findings
                   </label>
-                  <textarea
-                    value={findings}
-                    onChange={(e) => setFindings(e.target.value)}
-                    rows={12}
-                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 font-mono"
-                    placeholder="Enter the medical findings here..."
-                  />
-                  <div className="mt-4">
-                    <button
-                      onClick={handleGenerateReport}
-                      disabled={loading}
-                      className="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center space-x-2"
-                    >
-                      {loading ? (
-                        <>
-                          <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                          <span>Generating...</span>
-                        </>
-                      ) : (
-                        <span>Generate Report</span>
+                  <div className="relative mt-1">
+                    <div className="relative">
+                      <textarea
+                        ref={textareaRef}
+                        id="findings-textarea"
+                        rows={12}
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                        placeholder="Enter or dictate medical findings..."
+                        value={findings}
+                        onChange={(e) => {
+                          setFindings(e.target.value);
+                          setLastInterimEnd(e.target.selectionStart);
+                        }}
+                      />
+                      {isRecording && interimTranscript && (
+                        <div className="absolute bottom-0 left-0 right-0 p-2 bg-gray-50 text-gray-500 text-sm border-t">
+                          {interimTranscript}
+                        </div>
                       )}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={toggleRecording}
+                        className={`absolute right-2 top-2 inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${
+                          isRecording ? 'bg-red-100' : ''
+                        }`}
+                        title={isRecording ? 'Stop Dictation' : 'Start Dictation'}
+                      >
+                        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" fill="currentColor"/>
+                          <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" fill="currentColor"/>
+                        </svg>
+                      </button>
+                      {isRecording && (
+                        <div className="absolute -bottom-20 left-0 right-0 h-16 bg-white border border-gray-200 rounded-md overflow-hidden">
+                          <canvas
+                            ref={canvasRef}
+                            className="w-full h-full"
+                            width={800}
+                            height={64}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
                   </div>
                 </div>
 
