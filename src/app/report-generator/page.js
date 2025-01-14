@@ -4,6 +4,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { MEDICAL_SPECIALTIES } from '@/lib/constants';
+import { useSession } from 'next-auth/react';
+import ChatInterface from '@/components/ChatInterface';
+import Settings from '@/components/Settings';
 
 // Medical terminology for improved recognition
 const MEDICAL_TERMS = [
@@ -63,7 +66,7 @@ const TranscriptionDialog = ({ webSpeechText, whisperText, onUseWhisper, onKeepC
   );
 };
 
-export default function MedicalReportGenerator() {
+export default function ReportGenerator() {
   const searchParams = useSearchParams();
   const reportId = searchParams.get('id');
   
@@ -507,8 +510,8 @@ export default function MedicalReportGenerator() {
         const { done, value } = await reader.read();
         if (done) break;
         
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        const text = decoder.decode(value);
+        const lines = text.split('\n');
         
         for (const line of lines) {
           if (!line.trim() || !line.startsWith('data: ')) continue;
@@ -772,316 +775,104 @@ export default function MedicalReportGenerator() {
     }
   };
 
+  const { data: session } = useSession();
+  const [showSettings, setShowSettings] = useState(false);
+
+  const handleSubmit = async (input, streamCallback = () => {}) => {
+    try {
+      const response = await fetch('/api/reports/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          findings: input,
+          specialty: 'General',
+          promptId: 'default'
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to generate report');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullText = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const text = decoder.decode(value);
+        const lines = text.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') break;
+
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.content) {
+                fullText += parsed.content;
+                streamCallback(parsed.content);
+              }
+            } catch (e) {
+              console.error('Error parsing SSE message:', e);
+            }
+          }
+        }
+      }
+
+      return fullText;
+    } catch (error) {
+      console.error('Error generating report:', error);
+      throw error;
+    }
+  };
+
+  const handleApprove = async (content) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      // toast.success('Report copied to clipboard!');
+    } catch (error) {
+      console.error('Failed to copy report:', error);
+      // toast.error('Failed to copy report to clipboard');
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      {showTranscriptionDialog && (
-        <TranscriptionDialog
-          webSpeechText={currentWebSpeechText}
-          whisperText={whisperText}
-          onUseWhisper={handleUseWhisper}
-          onKeepCurrent={handleKeepWebSpeech}
-          onClose={() => setShowTranscriptionDialog(false)}
-        />
-      )}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-blue-600 to-indigo-600">
-            <div className="flex justify-between items-center">
-              <h1 className="text-2xl font-bold text-white">Medical Report Generator</h1>
-              <div className="flex space-x-4">
-                {saveSuccess && (
-                  <button
-                    onClick={resetForm}
-                    className="bg-white text-blue-600 px-4 py-2 rounded-md hover:bg-blue-50 transition-colors duration-200 flex items-center"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
-                    </svg>
-                    New Report
-                  </button>
-                )}
-                <Link
-                  href="/dashboard"
-                  className="bg-white text-blue-600 px-4 py-2 rounded-md hover:bg-blue-50 transition-colors duration-200 flex items-center"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" />
-                  </svg>
-                  Dashboard
-                </Link>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-6 space-y-6">
-            {error && (
-              <div className={`px-4 py-3 rounded-md ${
-                error.includes('success') ? 'bg-green-50 text-green-600 border border-green-200' : 'bg-red-50 text-red-600 border border-red-200'
-              }`}>
-                {error}
-              </div>
-            )}
-            {successMessage && (
-              <div className="px-4 py-3 rounded-md bg-green-50 text-green-600 border border-green-200">
-                {successMessage}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 gap-6">
-              <div className="bg-white p-6 rounded-lg border border-gray-200 space-y-4">
-                <div>
-                  <label className="block text-lg font-medium text-gray-900 mb-2">
-                    System Prompt
-                  </label>
-                  <div className="flex items-center space-x-4">
-                    <select
-                      value={selectedPrompt?.id || 'default'}
-                      onChange={(e) => {
-                        const selected = prompts.find(p => p.id === e.target.value) || { id: 'default', name: 'Default Prompt' };
-                        handlePromptChange(selected);
-                      }}
-                      className="w-full p-2 border rounded"
-                    >
-                      <option value="default">Default Prompt</option>
-                      {prompts && prompts.length > 0 ? (
-                        prompts.map(prompt => (
-                          <option key={prompt.id} value={prompt.id}>
-                            {prompt.name} ({prompt.specialty})
-                          </option>
-                        ))
-                      ) : null}
-                    </select>
-                  </div>
-                </div>
-
-                {selectedPromptData && (
-                  <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
-                    <div className="flex justify-between items-start mb-4">
-                      <h3 className="text-lg font-medium text-gray-900">
-                        {selectedPromptData.name}
-                      </h3>
-                      <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
-                        {selectedPromptData.specialty}
-                      </span>
-                    </div>
-                    <div className="prose prose-blue max-w-none">
-                      <pre className="text-base text-gray-700 whitespace-pre-wrap leading-relaxed bg-transparent border-none p-0">
-                        {selectedPromptData.promptText}
-                      </pre>
-                      {!selectedPromptData.promptText && (
-                        <p className="text-red-600">No prompt content available</p>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Specialty
-                    </label>
-                    <select
-                      value={specialty}
-                      onChange={handleSpecialtyChange}
-                      className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    >
-                      {MEDICAL_SPECIALTIES.map(spec => (
-                        <option key={spec} value={spec}>{spec}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Medical Findings
-                  </label>
-                  <div className="relative mt-1">
-                    <div className="relative">
-                      <textarea
-                        ref={textareaRef}
-                        rows={12}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                        placeholder="Enter or dictate medical findings..."
-                        value={findings}
-                        onChange={handleTextareaChange}
-                        onClick={(e) => setCursorPosition(e.target.selectionStart)}
-                        onKeyUp={(e) => setCursorPosition(e.target.selectionStart)}
-                      />
-                      {isRecording && interimTranscript && (
-                        <div className="absolute bottom-0 left-0 right-0 p-2 bg-gray-50 text-gray-500 text-sm border-t">
-                          {interimTranscript}
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        onClick={toggleRecording}
-                        disabled={micButtonState === 'processing'}
-                        className={`absolute right-2 top-2 p-2 rounded-full transition-all duration-200 ${
-                          micButtonState === 'idle'
-                            ? 'bg-white hover:bg-gray-100'
-                            : micButtonState === 'recording'
-                            ? 'bg-red-500 hover:bg-red-600'
-                            : 'bg-gray-200'
-                        }`}
-                        title={isRecording ? 'Stop Dictation' : 'Start Dictation'}
-                      >
-                        <div className="relative">
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            className={`h-5 w-5 transition-transform duration-200 ${
-                              micButtonState === 'recording' ? 'text-white scale-110' : 'text-gray-700'
-                            }`}
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-                            />
-                          </svg>
-                          {micButtonState === 'recording' && (
-                            <span className="absolute -top-1 -right-1 w-2 h-2">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                      {isRecording && (
-                        <div className="absolute -bottom-20 left-0 right-0 h-16 bg-white border border-gray-200 rounded-md overflow-hidden">
-                          <canvas
-                            ref={canvasRef}
-                            className="w-full h-full"
-                            width={800}
-                            height={64}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Generated Report
-                  </label>
-                  <textarea
-                    value={report}
-                    onChange={(e) => setReport(e.target.value)}
-                    rows={12}
-                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 font-mono"
-                    placeholder="AI-generated report will appear here..."
-                  />
-                  <div className="mt-4 flex justify-end">
-                    <button
-                      onClick={handleGenerateReport}
-                      disabled={!findings || loading}
-                      className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
-                    >
-                      {loading ? (
-                        <>
-                          <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                          </svg>
-                          Generating...
-                        </>
-                      ) : (
-                        <>
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                          </svg>
-                          Generate Report
-                        </>
-                      )}
-                    </button>
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2">
-                    <button
-                      onClick={handleRefine}
-                      disabled={isRefining || !report}
-                      className="bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center justify-center"
-                    >
-                      {isRefining ? (
-                        <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                      ) : (
-                        'Refine'
-                      )}
-                    </button>
-                    <button
-                      onClick={handleSaveReport}
-                      disabled={isSaving || !report}
-                      className="bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center"
-                    >
-                      {isSaving ? (
-                        <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                      ) : (
-                        'Save'
-                      )}
-                    </button>
-                    <button
-                      onClick={copyToClipboard}
-                      disabled={!report}
-                      className="bg-purple-600 text-white px-3 py-2 rounded-md hover:bg-purple-700 disabled:opacity-50"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex justify-between items-center">
+            <h1 className="text-2xl font-bold text-gray-900">Medical Report Generator</h1>
+            <button
+              onClick={() => setShowSettings(true)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+            >
+              Settings
+            </button>
           </div>
         </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="bg-white rounded-lg shadow p-6 min-h-[calc(100vh-12rem)]">
+          <ChatInterface
+            onSubmit={handleSubmit}
+            onApprove={handleApprove}
+          />
+        </div>
       </main>
-      <div className="fixed top-6 right-6 flex flex-col gap-2">
-        {interimTranscript && (
-          <div className="bg-gray-800 bg-opacity-90 text-white p-4 rounded-lg max-w-md">
-            <div className="text-sm font-medium mb-1">Transcribing...</div>
-            <div className="text-xs opacity-90">{interimTranscript}</div>
-          </div>
-        )}
-        {loading && (
-          <div className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2">
-            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-            </svg>
-            Processing...
-          </div>
-        )}
-      </div>
-      <div className="fixed bottom-6 left-6 flex flex-col gap-2">
-        {error && (
-          <div className="bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg max-w-md animate-fade-in">
-            <div className="flex items-center gap-2">
-              <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-              </svg>
-              {error}
-            </div>
-          </div>
-        )}
-        {successMessage && (
-          <div className="bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg max-w-md animate-fade-in">
-            <div className="flex items-center gap-2">
-              <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-              </svg>
-              {successMessage}
-            </div>
-          </div>
-        )}
-      </div>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <Settings onClose={() => setShowSettings(false)} />
+      )}
     </div>
   );
 }

@@ -23,12 +23,12 @@ export default function Navigation() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const navLinks = session?.user ? [
-    { href: '/report-generator', label: 'Report Generator' },
-    { href: '/prompts', label: 'Manage Prompts' },
-    { href: '/dashboard', label: 'Dashboard' },
-    ...(session.user.role === 'ADMIN' ? [{ href: '/admin', label: 'Admin' }] : []),
-  ] : [];
+  const navLinks = [
+    { href: '/', label: 'Home' },
+    { href: '/about', label: 'About' },
+    { href: '/settings', label: 'Settings' },
+    ...(session?.user ? [{ href: '/dashboard', label: 'Dashboard' }] : []),
+  ];
 
   return (
     <nav className="bg-gray-800">
