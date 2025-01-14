@@ -4,7 +4,17 @@ import { useState, useRef, useEffect } from 'react';
 import { FiSend, FiCheck, FiMaximize2, FiMinimize2, FiCopy, FiSave } from 'react-icons/fi';
 import { toast } from 'react-hot-toast';
 import { marked } from 'marked';
-import { formatMarkdownForClipboard, convertToRichText } from '@/utils/formatUtils';
+import { copyFormattedContent } from '@/utils/clipboardUtils';
+
+// Configure marked for security
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+  headerIds: false,
+  mangle: false,
+  headerPrefix: 'user-content-',
+  sanitize: true, // Enable built-in sanitizer
+});
 
 export default function ChatInterface({ onSubmit, onApprove }) {
   const [input, setInput] = useState('');
@@ -112,32 +122,11 @@ export default function ChatInterface({ onSubmit, onApprove }) {
 
   const handleCopy = async (content) => {
     try {
-      // Format the content
-      const formattedHtml = convertToRichText(content);
-      
-      // Create a temporary element to hold the HTML
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = formattedHtml;
-      
-      // Copy to clipboard with both HTML and plain text
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          'text/html': new Blob([tempDiv.innerHTML], { type: 'text/html' }),
-          'text/plain': new Blob([content], { type: 'text/plain' })
-        })
-      ]);
-      
+      await copyFormattedContent(content);
       toast.success('Copied to clipboard with formatting!');
     } catch (error) {
       console.error('Failed to copy:', error);
-      // Fallback to plain text if rich copy fails
-      try {
-        await navigator.clipboard.writeText(content);
-        toast.success('Copied to clipboard!');
-      } catch (fallbackError) {
-        console.error('Fallback copy failed:', fallbackError);
-        toast.error('Failed to copy to clipboard');
-      }
+      toast.error('Failed to copy to clipboard');
     }
   };
 
@@ -171,6 +160,16 @@ export default function ChatInterface({ onSubmit, onApprove }) {
     }
   };
 
+  const renderMarkdown = (content) => {
+    try {
+      const html = marked(content);
+      return { __html: html };
+    } catch (error) {
+      console.error('Error rendering markdown:', error);
+      return { __html: content };
+    }
+  };
+
   return (
     <div className="flex h-full">
       <div className={`flex-1 flex flex-col ${showHistory ? 'mr-4' : ''}`}>
@@ -189,7 +188,14 @@ export default function ChatInterface({ onSubmit, onApprove }) {
                     : 'bg-gray-100 text-gray-900'
                 }`}
               >
-                <div className="whitespace-pre-wrap">{message.content}</div>
+                {message.type === 'assistant' ? (
+                  <div 
+                    className="markdown-content prose prose-sm max-w-none dark:prose-invert prose-headings:mt-2 prose-headings:mb-1"
+                    dangerouslySetInnerHTML={renderMarkdown(message.content)}
+                  />
+                ) : (
+                  <div className="whitespace-pre-wrap">{message.content}</div>
+                )}
                 {message.type === 'assistant' && (
                   <div className="absolute top-2 right-2 flex space-x-1 bg-white rounded-lg p-1 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
@@ -224,10 +230,11 @@ export default function ChatInterface({ onSubmit, onApprove }) {
           {currentStreamingMessage && (
             <div className="flex justify-start">
               <div className="max-w-[80%] rounded-lg p-4 bg-gray-100 text-gray-900">
-                <div className="whitespace-pre-wrap">
-                  {currentStreamingMessage}
-                  <span className="inline-block animate-pulse">▊</span>
-                </div>
+                <div 
+                  className="markdown-content prose prose-sm max-w-none dark:prose-invert prose-headings:mt-2 prose-headings:mb-1"
+                  dangerouslySetInnerHTML={renderMarkdown(currentStreamingMessage)}
+                />
+                <span className="inline-block animate-pulse">▊</span>
               </div>
             </div>
           )}
