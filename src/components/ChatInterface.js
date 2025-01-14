@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { FiSend, FiCheck, FiMaximize2, FiMinimize2, FiCopy, FiSave } from 'react-icons/fi';
 import { toast } from 'react-hot-toast';
+import { marked } from 'marked';
+import { formatMarkdownForClipboard, convertToRichText } from '@/utils/formatUtils';
 
 export default function ChatInterface({ onSubmit, onApprove }) {
   const [input, setInput] = useState('');
@@ -110,11 +112,32 @@ export default function ChatInterface({ onSubmit, onApprove }) {
 
   const handleCopy = async (content) => {
     try {
-      await navigator.clipboard.writeText(content);
-      toast.success('Copied to clipboard!');
+      // Format the content
+      const formattedHtml = convertToRichText(content);
+      
+      // Create a temporary element to hold the HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = formattedHtml;
+      
+      // Copy to clipboard with both HTML and plain text
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([tempDiv.innerHTML], { type: 'text/html' }),
+          'text/plain': new Blob([content], { type: 'text/plain' })
+        })
+      ]);
+      
+      toast.success('Copied to clipboard with formatting!');
     } catch (error) {
       console.error('Failed to copy:', error);
-      toast.error('Failed to copy to clipboard');
+      // Fallback to plain text if rich copy fails
+      try {
+        await navigator.clipboard.writeText(content);
+        toast.success('Copied to clipboard!');
+      } catch (fallbackError) {
+        console.error('Fallback copy failed:', fallbackError);
+        toast.error('Failed to copy to clipboard');
+      }
     }
   };
 
